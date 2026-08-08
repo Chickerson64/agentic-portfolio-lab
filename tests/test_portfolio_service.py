@@ -9,6 +9,7 @@ import pytest
 from agentic_portfolio_lab.domain.portfolio import CashBalance, Contribution, Portfolio, Position, SecurityIdentity
 from agentic_portfolio_lab.domain.portfolio_service import PortfolioService, TargetPurchaseCalculation
 from agentic_portfolio_lab.domain.trades import ExecutedTrade, TradeProposal, ValidatedTrade
+from agentic_portfolio_lab.domain.valuation import PriceObservation
 
 
 UTC = timezone.utc
@@ -341,12 +342,23 @@ def test_execute_validated_trade_replaces_the_portfolio_decision_cycle() -> None
     assert updated.decision_cycle_id == executed_trade.decision_cycle_id
 
 
-def test_portfolio_snapshot_uses_current_cash_and_positions() -> None:
+def test_portfolio_snapshot_requires_supplied_prices() -> None:
     position = Position(_security(), Decimal("2"), Decimal("160"), Decimal("125"))
     portfolio = _portfolio(cash=Decimal("750"), positions=(position,))
 
     snapshot = PortfolioService.portfolio_snapshot(
         portfolio,
+        (
+            PriceObservation(
+                security=_security(),
+                observed_price=Decimal("125"),
+                market_date=date(2026, 8, 13),
+                observed_at=datetime(2026, 8, 13, tzinfo=UTC),
+                currency="USD",
+                source_provider_identity="test-provider",
+                price_convention="regular-session-close",
+            ),
+        ),
         as_of_timestamp=datetime(2026, 8, 13, tzinfo=UTC),
         source_provider_identity="test-provider",
         market_date=date(2026, 8, 13),
@@ -354,8 +366,8 @@ def test_portfolio_snapshot_uses_current_cash_and_positions() -> None:
         price_convention="regular-session-close",
     )
 
-    assert snapshot.cash_balance == Decimal("750")
-    assert snapshot.positions_market_value == Decimal("250")
+    assert snapshot.cash_value == Decimal("750")
+    assert snapshot.invested_value == Decimal("250")
     assert snapshot.total_value == Decimal("1000")
 
 
@@ -372,6 +384,17 @@ def test_service_calculations_ignore_ambient_decimal_context() -> None:
             )
             snapshot = PortfolioService.portfolio_snapshot(
                 updated,
+                (
+                    PriceObservation(
+                        security=_security(),
+                        observed_price=Decimal("102.345678"),
+                        market_date=date(2026, 8, 13),
+                        observed_at=datetime(2026, 8, 13, tzinfo=UTC),
+                        currency="USD",
+                        source_provider_identity="test-provider",
+                        price_convention="regular-session-close",
+                    ),
+                ),
                 as_of_timestamp=datetime(2026, 8, 13, tzinfo=UTC),
                 source_provider_identity="test-provider",
                 market_date=date(2026, 8, 13),

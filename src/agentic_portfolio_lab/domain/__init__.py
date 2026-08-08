@@ -4,7 +4,6 @@ from .portfolio import (
     CashBalance,
     Contribution,
     Portfolio,
-    PortfolioValuationSnapshot,
     Position,
     SecurityIdentity,
 )
@@ -16,18 +15,29 @@ from .trades import (
     TradeProposal,
     ValidatedTrade,
 )
+from .valuation import (
+    BenchmarkPortfolio,
+    PortfolioComparison,
+    PortfolioValuation,
+    PositionValuation,
+    PriceObservation,
+)
 
 __all__ = [
     "CashBalance",
+    "BenchmarkPortfolio",
     "Contribution",
     "EvidenceItem",
     "ExecutedTrade",
     "MissingData",
     "MissingDataReason",
     "Portfolio",
+    "PortfolioComparison",
     "PortfolioService",
-    "PortfolioValuationSnapshot",
+    "PortfolioValuation",
     "Position",
+    "PositionValuation",
+    "PriceObservation",
     "RejectedProposalValidationRecord",
     "ResearchBatch",
     "ResearchPacket",

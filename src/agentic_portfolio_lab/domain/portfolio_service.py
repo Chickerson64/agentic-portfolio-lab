@@ -5,13 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Iterable
 from uuid import UUID
 
 from .portfolio import (
     CashBalance,
     Contribution,
     Portfolio,
-    PortfolioValuationSnapshot,
     Position,
     SecurityIdentity,
     _calculate_decimal,
@@ -20,6 +20,7 @@ from .portfolio import (
     _require_positive_decimal,
 )
 from .trades import ExecutedTrade
+from .valuation import PortfolioValuation, PriceObservation
 
 
 def _require_target_weight(value: Decimal) -> Decimal:
@@ -240,20 +241,20 @@ class PortfolioService:
     @staticmethod
     def portfolio_snapshot(
         portfolio: Portfolio,
+        price_observations: Iterable[PriceObservation],
         *,
         as_of_timestamp: datetime,
         source_provider_identity: str,
         market_date: date,
         source_price_timestamp: datetime,
         price_convention: str,
-    ) -> PortfolioValuationSnapshot:
+    ) -> PortfolioValuation:
         if not isinstance(portfolio, Portfolio):
             raise TypeError("portfolio must be a Portfolio")
-        return PortfolioValuationSnapshot.from_components(
-            portfolio_id=portfolio.portfolio_id,
+        return PortfolioValuation.from_portfolio(
+            portfolio,
+            price_observations,
             as_of_timestamp=as_of_timestamp,
-            cash_balance=portfolio.cash_balance,
-            positions=portfolio.positions,
             source_provider_identity=source_provider_identity,
             market_date=market_date,
             source_price_timestamp=source_price_timestamp,

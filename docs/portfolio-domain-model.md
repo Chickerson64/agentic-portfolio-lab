@@ -174,7 +174,8 @@ Security Identity is the canonical identifier set for a security or tradable ins
 
 ### 5. Portfolio Valuation Snapshot
 
-A Portfolio Valuation Snapshot is a point-in-time view of portfolio value.
+A Portfolio Valuation Snapshot is a point-in-time view of portfolio value derived
+from supplied, source-attributed price observations rather than stored position prices.
 
 ### Conceptual fields
 
