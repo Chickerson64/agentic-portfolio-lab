@@ -8,6 +8,12 @@ from .portfolio import (
     Position,
     SecurityIdentity,
 )
+from .trades import (
+    ExecutedTrade,
+    RejectedProposalValidationRecord,
+    TradeProposal,
+    ValidatedTrade,
+)
 
 __all__ = [
     "CashBalance",
@@ -16,4 +22,8 @@ __all__ = [
     "PortfolioValuationSnapshot",
     "Position",
     "SecurityIdentity",
+    "ExecutedTrade",
+    "RejectedProposalValidationRecord",
+    "TradeProposal",
+    "ValidatedTrade",
 ]
