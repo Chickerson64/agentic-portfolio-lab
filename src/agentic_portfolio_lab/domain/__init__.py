@@ -1,4 +1,4 @@
-"""Deterministic domain models for Agentic Portfolio Lab."""
+"""Framework-independent deterministic domain models."""
 
 from .portfolio import (
     CashBalance,
@@ -8,6 +8,7 @@ from .portfolio import (
     Position,
     SecurityIdentity,
 )
+from .research import EvidenceItem, MissingData, MissingDataReason, ResearchBatch, ResearchPacket, ResearchSection
 from .trades import (
     ExecutedTrade,
     RejectedProposalValidationRecord,
@@ -18,12 +19,18 @@ from .trades import (
 __all__ = [
     "CashBalance",
     "Contribution",
+    "EvidenceItem",
+    "ExecutedTrade",
+    "MissingData",
+    "MissingDataReason",
     "Portfolio",
     "PortfolioValuationSnapshot",
     "Position",
-    "SecurityIdentity",
-    "ExecutedTrade",
     "RejectedProposalValidationRecord",
+    "ResearchBatch",
+    "ResearchPacket",
+    "ResearchSection",
+    "SecurityIdentity",
     "TradeProposal",
     "ValidatedTrade",
 ]
