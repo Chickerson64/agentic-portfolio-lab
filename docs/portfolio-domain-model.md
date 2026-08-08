@@ -22,6 +22,7 @@ For the first vertical slice:
 - target weights support up to 6 decimal places
 - fractional share quantities support up to 8 decimal places
 - binary floating-point values must not be used for authoritative portfolio calculations
+- position `total_cost_basis` is authoritative; per-share average cost basis is a derived informational value
 - fractional shares are supported
 - an approved `target_weight` is converted downstream into a dollar amount and a quantity
 - the SPY benchmark uses the same starting capital and contribution schedule as the live portfolio
@@ -121,7 +122,8 @@ A Position is the canonical ownership record for one security within a portfolio
 - `quantity`
 - `quantity_precision`
 - `fractional_quantity_supported`
-- `average_cost_basis`
+- `total_cost_basis`
+- `average_cost_basis` (derived informational value)
 - `cost_basis_currency`
 - `market_price`
 - `market_value`
@@ -132,7 +134,7 @@ A Position is the canonical ownership record for one security within a portfolio
 ### Why it exists
 
 - positions are the core representation of ownership
-- current quantity and cost basis are needed for valuation and reporting
+- current quantity and authoritative total cost basis are needed for valuation and reporting
 - market value and unrealized P&L are derived from deterministic price snapshots
 
 ### Invariants
@@ -143,6 +145,7 @@ A Position is the canonical ownership record for one security within a portfolio
 - market value is derived from quantity and price
 - the model supports fractional share quantities where the security allows it
 - quantity uses decimal-safe arithmetic and is rounded only by deterministic rules
+- total cost basis is authoritative; average cost per share is derived for reporting only
 
 ### 4. Security Identity
 
@@ -366,26 +369,27 @@ An Executed Trade is a finalized portfolio event representing a completed buy.
 
 ### 10. Cost Basis
 
-Cost Basis is the deterministic per-share ownership cost used for reporting unrealized gains and future comparisons.
+Cost Basis is the deterministic total ownership cost used for reporting unrealized gains and future comparisons. Per-share average cost is derived for informational reporting using the deterministic domain-owned Decimal context/policy defined by the implementation.
 
 ### Conceptual fields
 
 - `cost_basis_id`
 - `position_id`
-- `average_cost_per_share`
-- `total_cost`
+- `total_cost_basis`
+- `average_cost_per_share` (derived informational value)
 - `currency`
 - `calculated_at`
 - `method`
 
 ### Why it exists
 
-- cost basis supports unrealized P&L reporting
+- authoritative total cost basis supports unrealized P&L reporting
 - it allows trade fills to update position economics deterministically
 
 ### Invariants
 
-- cost basis is derived from executed trades
+- total cost basis is derived from executed trades
+- average cost per share is derived from total cost basis and quantity for informational reporting
 - cost basis does not come from a manager recommendation
 - cost basis changes only through deterministic update rules
 

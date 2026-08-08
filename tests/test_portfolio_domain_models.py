@@ -38,26 +38,62 @@ def test_cash_balance_preserves_supplied_decimal_precision() -> None:
     assert balance.amount == Decimal("100.123456")
 
 
-def test_position_preserves_money_precision_and_calculates_derived_values() -> None:
+def test_position_preserves_authoritative_total_cost_and_calculates_derived_values() -> None:
     security = SecurityIdentity(ticker="AAPL", security_type="equity", exchange="NASDAQ", currency="USD")
     position = Position(
         security=security,
         quantity=Decimal("1.23456789"),
-        average_cost_basis=Decimal("100.123456"),
+        total_cost_basis=Decimal("123.60920381342784"),
         market_price=Decimal("105.987654"),
     )
 
     assert position.quantity == Decimal("1.23456789")
+    assert position.total_cost_basis == Decimal("123.60920381342784")
     assert position.average_cost_basis == Decimal("100.123456")
     assert position.market_price == Decimal("105.987654")
     assert position.market_value == position.quantity * position.market_price
-    assert position.unrealized_pnl == (position.market_price - position.average_cost_basis) * position.quantity
+    assert position.unrealized_pnl == position.market_value - position.total_cost_basis
 
     with pytest.raises(ValueError):
         Position(
             security=security,
             quantity=Decimal("1.234567891"),
-            average_cost_basis=Decimal("100"),
+            total_cost_basis=Decimal("100"),
+            market_price=Decimal("100"),
+        )
+
+
+def test_average_cost_basis_is_informational_and_context_independent() -> None:
+    def average_under_precision(precision: int) -> Decimal:
+        with localcontext() as context:
+            context.prec = precision
+            position = Position(
+                security=SecurityIdentity(ticker="AAPL", security_type="equity", exchange="NASDAQ", currency="USD"),
+                quantity=Decimal("3"),
+                total_cost_basis=Decimal("302"),
+                market_price=Decimal("100"),
+            )
+            return position.average_cost_basis
+
+    assert average_under_precision(6) == average_under_precision(50)
+    assert average_under_precision(6) == Decimal("100.6666666666666666666666667")
+
+
+def test_zero_quantity_position_requires_zero_total_cost_basis() -> None:
+    security = SecurityIdentity(ticker="AAPL", security_type="equity", exchange="NASDAQ", currency="USD")
+    position = Position(
+        security=security,
+        quantity=Decimal("0"),
+        total_cost_basis=Decimal("0"),
+        market_price=Decimal("100"),
+    )
+
+    assert position.average_cost_basis == Decimal("0")
+    with pytest.raises(ValueError, match="total_cost_basis must be zero"):
+        Position(
+            security=security,
+            quantity=Decimal("0"),
+            total_cost_basis=Decimal("1"),
             market_price=Decimal("100"),
         )
 
@@ -108,7 +144,7 @@ def test_portfolio_rejects_currency_mismatch_and_derives_values() -> None:
     position = Position(
         security=security,
         quantity=Decimal("1.0"),
-        average_cost_basis=Decimal("100"),
+        total_cost_basis=Decimal("100"),
         market_price=Decimal("110"),
     )
     cash = CashBalance(currency="USD", amount=Decimal("890"))
@@ -142,7 +178,7 @@ def test_portfolio_rejects_currency_mismatch_and_derives_values() -> None:
     normalized_equivalent_position = Position(
         security=normalized_equivalent_security,
         quantity=Decimal("2"),
-        average_cost_basis=Decimal("105"),
+        total_cost_basis=Decimal("210"),
         market_price=Decimal("110"),
     )
     with pytest.raises(ValueError):
@@ -182,7 +218,7 @@ def test_valuation_snapshot_is_derived_from_components() -> None:
     position = Position(
         security=security,
         quantity=Decimal("2"),
-        average_cost_basis=Decimal("100"),
+        total_cost_basis=Decimal("200"),
         market_price=Decimal("105.5555"),
     )
     cash = CashBalance(currency="USD", amount=Decimal("789.4321"))
@@ -220,7 +256,7 @@ def test_valuation_snapshot_rejects_inconsistent_totals_and_cross_currency_posit
     eur_position = Position(
         security=SecurityIdentity(ticker="SAP", security_type="equity", exchange="XETRA", currency="EUR"),
         quantity=Decimal("1"),
-        average_cost_basis=Decimal("100"),
+        total_cost_basis=Decimal("100"),
         market_price=Decimal("100"),
     )
     with pytest.raises(ValueError, match="currency"):
@@ -267,7 +303,7 @@ def test_authoritative_calculations_ignore_the_ambient_decimal_context() -> None
             position = Position(
                 security=SecurityIdentity(ticker="AAPL", security_type="equity", exchange="NASDAQ", currency="USD"),
                 quantity=Decimal("1.23456789"),
-                average_cost_basis=Decimal("100.123456"),
+                total_cost_basis=Decimal("123.60920381342784"),
                 market_price=Decimal("105.987654"),
             )
             cash = CashBalance(currency="USD", amount=Decimal("100000000.123456"))

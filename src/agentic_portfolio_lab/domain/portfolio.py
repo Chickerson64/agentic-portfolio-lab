@@ -7,7 +7,7 @@ financial values in ``Decimal`` form.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from decimal import Context, Decimal, MAX_EMAX, MAX_PREC, MIN_EMIN, localcontext
+from decimal import Context, Decimal, MAX_EMAX, MAX_PREC, MIN_EMIN, ROUND_HALF_EVEN, localcontext
 from datetime import date, datetime
 from typing import Callable, Final
 from uuid import UUID, uuid4
@@ -18,9 +18,17 @@ QUANTITY_PLACES: Final = Decimal("0.00000001")
 # Python's Decimal implementation, independent of caller-controlled context.
 _DOMAIN_DECIMAL_CONTEXT: Final = Context(prec=MAX_PREC, Emax=MAX_EMAX, Emin=MIN_EMIN)
 
+# Average cost is informational only. Authoritative cost basis is total cost.
+_INFORMATIONAL_DECIMAL_CONTEXT: Final = Context(prec=28, rounding=ROUND_HALF_EVEN)
+
 
 def _calculate_decimal(operation: Callable[[], Decimal]) -> Decimal:
     with localcontext(_DOMAIN_DECIMAL_CONTEXT):
+        return operation()
+
+
+def _calculate_informational_decimal(operation: Callable[[], Decimal]) -> Decimal:
+    with localcontext(_INFORMATIONAL_DECIMAL_CONTEXT):
         return operation()
 
 
@@ -109,7 +117,7 @@ class CashBalance:
 class Position:
     security: SecurityIdentity
     quantity: Decimal
-    average_cost_basis: Decimal
+    total_cost_basis: Decimal
     market_price: Decimal
 
     def __post_init__(self) -> None:
@@ -117,10 +125,12 @@ class Position:
             raise TypeError("security must be a SecurityIdentity")
         quantity = _require_non_negative_decimal(self.quantity, field_name="quantity")
         quantity = _require_max_decimal_places(quantity, QUANTITY_PLACES, field_name="quantity")
-        average_cost_basis = _require_non_negative_decimal(self.average_cost_basis, field_name="average_cost_basis")
+        total_cost_basis = _require_non_negative_decimal(self.total_cost_basis, field_name="total_cost_basis")
+        if quantity.is_zero() and not total_cost_basis.is_zero():
+            raise ValueError("total_cost_basis must be zero when quantity is zero")
         market_price = _require_non_negative_decimal(self.market_price, field_name="market_price")
         object.__setattr__(self, "quantity", quantity)
-        object.__setattr__(self, "average_cost_basis", average_cost_basis)
+        object.__setattr__(self, "total_cost_basis", total_cost_basis)
         object.__setattr__(self, "market_price", market_price)
 
     @property
@@ -128,8 +138,15 @@ class Position:
         return _calculate_decimal(lambda: self.quantity * self.market_price)
 
     @property
+    def average_cost_basis(self) -> Decimal:
+        """Informational per-share average derived from authoritative total cost."""
+        if self.quantity.is_zero():
+            return Decimal("0")
+        return _calculate_informational_decimal(lambda: self.total_cost_basis / self.quantity)
+
+    @property
     def unrealized_pnl(self) -> Decimal:
-        return _calculate_decimal(lambda: (self.market_price - self.average_cost_basis) * self.quantity)
+        return _calculate_decimal(lambda: self.market_value - self.total_cost_basis)
 
 
 @dataclass(frozen=True, slots=True)

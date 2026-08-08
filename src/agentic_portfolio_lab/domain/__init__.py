@@ -8,6 +8,7 @@ from .portfolio import (
     Position,
     SecurityIdentity,
 )
+from .portfolio_service import PortfolioService, TargetPurchaseCalculation
 from .research import EvidenceItem, MissingData, MissingDataReason, ResearchBatch, ResearchPacket, ResearchSection
 from .trades import (
     ExecutedTrade,
@@ -24,6 +25,7 @@ __all__ = [
     "MissingData",
     "MissingDataReason",
     "Portfolio",
+    "PortfolioService",
     "PortfolioValuationSnapshot",
     "Position",
     "RejectedProposalValidationRecord",
@@ -32,5 +34,6 @@ __all__ = [
     "ResearchSection",
     "SecurityIdentity",
     "TradeProposal",
+    "TargetPurchaseCalculation",
     "ValidatedTrade",
 ]

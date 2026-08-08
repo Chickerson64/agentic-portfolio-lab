@@ -35,6 +35,7 @@ For the first implementation:
 - `SELL`, `TRIM`, `REBALANCE`, and replacement trades are deferred
 - for a portfolio-level `HOLD`, `ticker` is `null` and `target_weight` is `null`
 - `target_weight` is the allocation shape, expressed as a decimal from `0.0` to `1.0`
+- a `BUY` requires `target_weight` to be strictly greater than `0`; `HOLD` uses `null`
 - the deterministic portfolio engine converts `target_weight` into dollars and fractional shares
 - `confidence_score` is an integer from `0` to `100`
 - `confidence_score` reflects confidence in the decision given the supplied evidence, not probability of positive returns
@@ -441,7 +442,7 @@ For the first version of the contract:
 - `decision_rationale` is always required
 - `investment_thesis` is required for `BUY`
 - `ticker` is required for `BUY`
-- `target_weight` is required for `BUY`
+- `target_weight` is required and strictly greater than `0` for `BUY`
 - `ticker` is `null` for `HOLD`
 - `target_weight` is `null` for `HOLD`
 
