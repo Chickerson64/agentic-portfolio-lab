@@ -29,6 +29,7 @@ from .valuation import (
     PositionValuation,
     PriceObservation,
 )
+from .value_manager import ValueManager, ValueManagerDecisionContext
 
 __all__ = [
     "CashBalance",
@@ -58,4 +59,6 @@ __all__ = [
     "TradeProposal",
     "TargetPurchaseCalculation",
     "ValidatedTrade",
+    "ValueManager",
+    "ValueManagerDecisionContext",
 ]
