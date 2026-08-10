@@ -8,6 +8,7 @@ from .portfolio import (
     SecurityIdentity,
 )
 from .constitution import ConstitutionLoader, ConstitutionVersion, ValueManagerConstitution
+from .journal import DecisionJournalEntry
 from .portfolio_service import PortfolioService, TargetPurchaseCalculation
 from .recommendations import (
     PortfolioRecommendation,
@@ -50,6 +51,7 @@ __all__ = [
     "BenchmarkPortfolio",
     "Contribution",
     "DeterministicRiskValidator",
+    "DecisionJournalEntry",
     "EvidenceItem",
     "ExecutedTrade",
     "MissingData",
