@@ -1,36 +1,38 @@
 # Backlog
 
-## Phase 1: Documentation-first scaffold
+## Completed foundation
 
-- [x] Create repository skeleton
-- [x] Write project charter
-- [x] Write architecture overview
-- [x] Write design principles
-- [x] Capture open questions
-- [x] Create backlog placeholder
-- [x] Add Python package skeleton
+- [x] Define the Portfolio Manager, Research Packet, portfolio-domain, and Value Manager constitution contracts.
+- [x] Implement immutable portfolio, trade, research, valuation, benchmark, recommendation, constitution, and approval domain models.
+- [x] Implement pre-approval Value Manager decision orchestration: workflow, deterministic validation, reviewer, journal, and human approval state.
+- [x] Record the Cash Event, Portfolio Constitution, and Decision vs Execution architecture decisions.
 
-## Phase 2: Initial design
+## First end-to-end MVP
 
-- [ ] Define the Value Manager constitution
-- [ ] Define the research packet schema
-- [ ] Define the deterministic risk engine contract
-- [ ] Define the AI reviewer contract
-- [ ] Define the approval workflow contract
+The first usable MVP is a paper-trading demonstration with manually supplied,
+source-backed Research Batches. It intentionally defers automated research
+retrieval until the decision and simulation path is proven.
 
-## Phase 3: First vertical slice
+1. `#16` Cash Event funding workflow: apply the same explicit Cash Event to the
+   Value portfolio and the Passive Index portfolio, creating buying power
+   without automatically trading.
+2. `#15` Passive Index Constitution: deploy available cash into SPY at the next
+   applicable regular-session close using the shared deterministic execution
+   infrastructure and price convention.
+3. `#22` Post-approval simulated execution: execute an approved BUY as a
+   simulated next-applicable regular-session-close fill and update the Value
+   portfolio.
+4. `#23` First LLM-backed Value Manager adapter: produce one verified
+   recommendation from a supplied Research Batch.
+5. `#17` Performance tracking and comparison: produce comparable managed and
+   benchmark valuations.
+6. `#18–#21` Basic MVP dashboard: expose portfolio state, decisions, and
+   performance history.
 
-- [ ] Build one complete Value Manager workflow
-- [ ] Add deterministic risk checks
-- [ ] Add review output formatting
-- [ ] Add paper portfolio state handling
-- [ ] Add SPY benchmark tracking
+## Deferred until after the first MVP
 
-## Phase 4: Expansion
-
-- [ ] Add Conservative Manager
-- [ ] Add Growth / Opportunity Manager
-- [ ] Add scheduled runs
-- [ ] Add more research sources
-- [ ] Add brokerage paper trading later
-
+- Automated research retrieval, normalization, and Research Batch assembly.
+- Recurring Cash Event scheduling.
+- Additional active managers and constitutions.
+- Advanced performance analytics, optimization, or forecasting.
+- Production persistence, broker integration, and real-money execution.
