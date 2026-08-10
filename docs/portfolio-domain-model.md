@@ -316,7 +316,7 @@ A Validated Trade is a trade proposal that has passed deterministic checks.
 ### Invariants
 
 - validation is deterministic
-- a validated trade still may not be executed
+- a validated trade records validation-time feasibility and still may not be executed
 - a validated trade must preserve the original proposal lineage
 - the associated validation result preserves the exact caller-supplied price observation used to validate the trade, including its security, price, provider, market date, timestamp, currency, and price convention
 
@@ -376,6 +376,8 @@ An Executed Trade is a finalized portfolio event representing a completed buy.
 - it anchors audit trails and future cost basis calculations
 - it records exactly one simulated fill in the first vertical slice
 - it records the approved source/provider identity, market date, currency, and price convention for the fill
+- it records the actual simulated fill recalculated from execution-time portfolio state and price
+- the execution Price Observation is authoritative provenance; copied fill metadata must match it exactly
 
 ### Invariants
 

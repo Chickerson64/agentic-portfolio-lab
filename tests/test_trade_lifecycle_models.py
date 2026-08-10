@@ -232,7 +232,7 @@ def test_executed_trade_is_a_single_simulated_fill_with_validated_lineage() -> N
     assert executed.executed_notional == Decimal("126.35268773907942")
 
 
-def test_executed_trade_rejects_partial_fills_currency_mismatches_and_invalid_time_fields() -> None:
+def test_executed_trade_allows_recalculated_quantity_and_rejects_invalid_time_or_currency() -> None:
     validated = _validated_trade()
     common_arguments = {
         "validated_trade": validated,
@@ -245,8 +245,11 @@ def test_executed_trade_rejects_partial_fills_currency_mismatches_and_invalid_ti
         "executed_at": datetime(2026, 8, 11, 20, tzinfo=timezone.utc),
     }
 
-    with pytest.raises(ValueError, match="partial fills"):
-        ExecutedTrade(executed_quantity=Decimal("1"), **{key: value for key, value in common_arguments.items() if key != "executed_quantity"})
+    recalculated = ExecutedTrade(
+        executed_quantity=Decimal("1"),
+        **{key: value for key, value in common_arguments.items() if key != "executed_quantity"},
+    )
+    assert recalculated.executed_quantity == Decimal("1")
     with pytest.raises(ValueError, match="currency"):
         ExecutedTrade(currency="EUR", **{key: value for key, value in common_arguments.items() if key != "currency"})
     with pytest.raises(TypeError, match="date, not a datetime"):

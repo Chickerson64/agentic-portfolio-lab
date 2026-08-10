@@ -221,8 +221,6 @@ class ExecutedTrade:
         if not isinstance(self.validated_trade, ValidatedTrade):
             raise TypeError("validated_trade must be a ValidatedTrade")
         executed_quantity = _require_quantity(self.executed_quantity, field_name="executed_quantity")
-        if executed_quantity != self.validated_trade.validated_quantity:
-            raise ValueError("executed_quantity must equal validated_quantity; partial fills are deferred")
         execution_price = _require_positive_decimal(self.execution_price, field_name="execution_price")
         currency = _canonical_upper_text(self.currency, field_name="currency")
         if currency != self.validated_trade.security.currency:

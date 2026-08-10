@@ -26,6 +26,7 @@ from .performance import (
     PerformanceSnapshot,
     PortfolioPerformanceHistory,
 )
+from .simulated_execution import SimulatedExecutionResult, SimulatedExecutionWorkflow
 from .recommendations import (
     PortfolioRecommendation,
     RecommendationAction,
@@ -114,6 +115,8 @@ __all__ = [
     "RiskValidationResult",
     "RiskValidationStatus",
     "SecurityIdentity",
+    "SimulatedExecutionResult",
+    "SimulatedExecutionWorkflow",
     "TradeProposal",
     "TargetPurchaseCalculation",
     "ValidatedTrade",
