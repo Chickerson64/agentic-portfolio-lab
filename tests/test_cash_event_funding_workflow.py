@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime, timezone
 from decimal import Decimal, localcontext
@@ -12,7 +13,7 @@ from agentic_portfolio_lab.domain.cash_events import (
     CashEventFundingResult,
     CashEventFundingWorkflow,
 )
-from agentic_portfolio_lab.domain.portfolio import CashBalance, Portfolio, Position, SecurityIdentity
+from agentic_portfolio_lab.domain.portfolio import CashBalance, Contribution, Portfolio, Position, SecurityIdentity
 from agentic_portfolio_lab.domain.valuation import BenchmarkPortfolio
 
 
@@ -73,6 +74,9 @@ def test_paired_funding_applies_one_cash_event_to_cash_only_and_preserves_lineag
     assert result.cash_event is cash_event
     assert result.event_id == cash_event.event_id
     assert result.applied_at == cash_event.effective_at
+    assert result.managed_contribution.cash_event_id == cash_event.event_id
+    assert result.benchmark_contribution.cash_event_id == cash_event.event_id
+    assert result.managed_contribution.contribution_id != result.benchmark_contribution.contribution_id
     assert result.funded_managed_portfolio.cash_balance.amount == Decimal("1050.1234")
     assert result.funded_benchmark_portfolio.portfolio.cash_balance.amount == Decimal("750.1234")
     assert result.funded_managed_portfolio.cash_balance.amount - managed.cash_balance.amount == cash_event.amount
@@ -172,18 +176,252 @@ def test_distinct_cash_events_accumulate_without_investing_cash() -> None:
     assert second.funded_benchmark_portfolio.portfolio.positions == benchmark.portfolio.positions
 
 
+def test_same_cash_event_applied_twice_deposits_twice() -> None:
+    managed = _managed_portfolio()
+    benchmark = _benchmark_portfolio()
+    event = _cash_event(Decimal("100"))
+
+    first = CashEventFundingWorkflow.apply(event, managed, benchmark)
+    second = CashEventFundingWorkflow.apply(
+        event,
+        first.funded_managed_portfolio,
+        first.funded_benchmark_portfolio,
+    )
+
+    assert second.funded_managed_portfolio.cash_balance.amount == Decimal("1000")
+    assert second.funded_benchmark_portfolio.portfolio.cash_balance.amount == Decimal("700")
+
+
+def test_funding_preserves_non_null_decision_cycle_ids() -> None:
+    managed = replace(_managed_portfolio(), decision_cycle_id=uuid4())
+    benchmark = _benchmark_portfolio()
+    benchmark = BenchmarkPortfolio(
+        portfolio=replace(benchmark.portfolio, decision_cycle_id=uuid4()),
+        benchmark_security=benchmark.benchmark_security,
+    )
+
+    result = CashEventFundingWorkflow.apply(_cash_event(), managed, benchmark)
+
+    assert result.funded_managed_portfolio.decision_cycle_id == managed.decision_cycle_id
+    assert result.funded_benchmark_portfolio.portfolio.decision_cycle_id == benchmark.portfolio.decision_cycle_id
+
+
 def test_result_rejects_direct_construction_that_changes_non_cash_state() -> None:
     managed = _managed_portfolio()
     benchmark = _benchmark_portfolio()
     event = _cash_event()
-    funded_managed = CashEventFundingWorkflow.apply(event, managed, benchmark).funded_managed_portfolio
+    result = CashEventFundingWorkflow.apply(event, managed, benchmark)
 
-    changed_positions = replace(funded_managed, positions=())
+    changed_positions = replace(result.funded_managed_portfolio, positions=())
     with pytest.raises(ValueError, match="only managed portfolio cash"):
         CashEventFundingResult(
             cash_event=event,
             original_managed_portfolio=managed,
             funded_managed_portfolio=changed_positions,
             original_benchmark_portfolio=benchmark,
-            funded_benchmark_portfolio=CashEventFundingWorkflow.apply(event, managed, benchmark).funded_benchmark_portfolio,
+            funded_benchmark_portfolio=result.funded_benchmark_portfolio,
+            managed_contribution=result.managed_contribution,
+            benchmark_contribution=result.benchmark_contribution,
         )
+
+
+@pytest.mark.parametrize(
+    "substitute_event",
+    [
+        lambda event: replace(event, event_id=uuid4()),
+        lambda event: replace(event, effective_at=datetime(2026, 8, 21, 14, tzinfo=UTC)),
+        lambda event: replace(event, source="another bank"),
+    ],
+    ids=["event-id", "effective-at", "source"],
+)
+def test_result_rejects_substitute_cash_event_with_matching_amount_and_currency(
+    substitute_event: Callable[[CashEvent], CashEvent],
+) -> None:
+    managed = _managed_portfolio()
+    benchmark = _benchmark_portfolio()
+    event = _cash_event()
+    result = CashEventFundingWorkflow.apply(event, managed, benchmark)
+
+    with pytest.raises(ValueError, match="CashEvent"):
+        CashEventFundingResult(
+            cash_event=substitute_event(event),
+            original_managed_portfolio=managed,
+            funded_managed_portfolio=result.funded_managed_portfolio,
+            original_benchmark_portfolio=benchmark,
+            funded_benchmark_portfolio=result.funded_benchmark_portfolio,
+            managed_contribution=result.managed_contribution,
+            benchmark_contribution=result.benchmark_contribution,
+        )
+
+
+@pytest.mark.parametrize(
+    "tamper_contribution",
+    [
+        lambda contribution: replace(contribution, amount=Decimal("1")),
+        lambda contribution: replace(contribution, currency="EUR"),
+        lambda contribution: replace(contribution, cash_event_id=uuid4()),
+        lambda contribution: replace(
+            contribution,
+            effective_at=datetime(2026, 8, 21, 14, tzinfo=UTC),
+        ),
+        lambda contribution: replace(
+            contribution,
+            received_at=datetime(2026, 8, 21, 14, tzinfo=UTC),
+        ),
+        lambda contribution: replace(contribution, source="another bank"),
+    ],
+    ids=["amount", "currency", "event-id", "effective-at", "received-at", "source"],
+)
+def test_result_rejects_tampered_managed_contribution(
+    tamper_contribution: Callable[[Contribution], Contribution],
+) -> None:
+    managed = _managed_portfolio()
+    benchmark = _benchmark_portfolio()
+    result = CashEventFundingWorkflow.apply(_cash_event(), managed, benchmark)
+
+    with pytest.raises(ValueError):
+        CashEventFundingResult(
+            cash_event=result.cash_event,
+            original_managed_portfolio=managed,
+            funded_managed_portfolio=result.funded_managed_portfolio,
+            original_benchmark_portfolio=benchmark,
+            funded_benchmark_portfolio=result.funded_benchmark_portfolio,
+            managed_contribution=tamper_contribution(result.managed_contribution),
+            benchmark_contribution=result.benchmark_contribution,
+        )
+
+
+def test_result_rejects_reusing_one_contribution_for_both_portfolio_paths() -> None:
+    managed = _managed_portfolio()
+    benchmark = _benchmark_portfolio()
+    result = CashEventFundingWorkflow.apply(_cash_event(), managed, benchmark)
+
+    with pytest.raises(ValueError, match="distinct contribution_id"):
+        CashEventFundingResult(
+            cash_event=result.cash_event,
+            original_managed_portfolio=managed,
+            funded_managed_portfolio=result.funded_managed_portfolio,
+            original_benchmark_portfolio=benchmark,
+            funded_benchmark_portfolio=result.funded_benchmark_portfolio,
+            managed_contribution=result.managed_contribution,
+            benchmark_contribution=result.managed_contribution,
+        )
+
+
+def test_result_rejects_direct_construction_with_changed_starting_capital() -> None:
+    managed = _managed_portfolio()
+    benchmark = _benchmark_portfolio()
+    result = CashEventFundingWorkflow.apply(_cash_event(), managed, benchmark)
+
+    with pytest.raises(ValueError, match="only managed portfolio cash"):
+        CashEventFundingResult(
+            cash_event=result.cash_event,
+            original_managed_portfolio=managed,
+            funded_managed_portfolio=replace(result.funded_managed_portfolio, starting_capital=Decimal("1001")),
+            original_benchmark_portfolio=benchmark,
+            funded_benchmark_portfolio=result.funded_benchmark_portfolio,
+            managed_contribution=result.managed_contribution,
+            benchmark_contribution=result.benchmark_contribution,
+        )
+
+
+def test_result_rejects_direct_construction_with_changed_benchmark_holdings() -> None:
+    managed = _managed_portfolio()
+    benchmark = _benchmark_portfolio()
+    result = CashEventFundingWorkflow.apply(_cash_event(), managed, benchmark)
+    changed_position = replace(result.funded_benchmark_portfolio.portfolio.positions[0], market_price=Decimal("401"))
+    changed_benchmark = BenchmarkPortfolio(
+        portfolio=replace(result.funded_benchmark_portfolio.portfolio, positions=(changed_position,)),
+        benchmark_security=benchmark.benchmark_security,
+    )
+
+    with pytest.raises(ValueError, match="only benchmark portfolio cash"):
+        CashEventFundingResult(
+            cash_event=result.cash_event,
+            original_managed_portfolio=managed,
+            funded_managed_portfolio=result.funded_managed_portfolio,
+            original_benchmark_portfolio=benchmark,
+            funded_benchmark_portfolio=changed_benchmark,
+            managed_contribution=result.managed_contribution,
+            benchmark_contribution=result.benchmark_contribution,
+        )
+
+
+def test_result_rejects_direct_construction_with_currency_mismatch() -> None:
+    managed = _managed_portfolio()
+    benchmark = _benchmark_portfolio()
+    result = CashEventFundingWorkflow.apply(_cash_event(), managed, benchmark)
+
+    with pytest.raises(ValueError, match="currency"):
+        CashEventFundingResult(
+            cash_event=replace(result.cash_event, currency="EUR"),
+            original_managed_portfolio=managed,
+            funded_managed_portfolio=result.funded_managed_portfolio,
+            original_benchmark_portfolio=benchmark,
+            funded_benchmark_portfolio=result.funded_benchmark_portfolio,
+            managed_contribution=replace(result.managed_contribution, currency="EUR"),
+            benchmark_contribution=replace(result.benchmark_contribution, currency="EUR"),
+        )
+
+
+def test_result_rejects_direct_construction_with_incorrect_cash_delta() -> None:
+    managed = _managed_portfolio()
+    benchmark = _benchmark_portfolio()
+    result = CashEventFundingWorkflow.apply(_cash_event(), managed, benchmark)
+    incorrect_cash = replace(
+        result.funded_managed_portfolio,
+        cash_balance=CashBalance(currency="USD", amount=Decimal("999")),
+    )
+
+    with pytest.raises(ValueError, match="cash must increase"):
+        CashEventFundingResult(
+            cash_event=result.cash_event,
+            original_managed_portfolio=managed,
+            funded_managed_portfolio=incorrect_cash,
+            original_benchmark_portfolio=benchmark,
+            funded_benchmark_portfolio=result.funded_benchmark_portfolio,
+            managed_contribution=result.managed_contribution,
+            benchmark_contribution=result.benchmark_contribution,
+        )
+
+
+@pytest.mark.parametrize("portfolio_path", ["managed", "benchmark"])
+def test_funding_rejects_event_effective_before_portfolio_creation(portfolio_path: str) -> None:
+    managed = _managed_portfolio()
+    benchmark = _benchmark_portfolio()
+    if portfolio_path == "managed":
+        managed = replace(managed, created_at=datetime(2026, 8, 21, tzinfo=UTC))
+    else:
+        benchmark = BenchmarkPortfolio(
+            portfolio=replace(benchmark.portfolio, created_at=datetime(2026, 8, 21, tzinfo=UTC)),
+            benchmark_security=benchmark.benchmark_security,
+        )
+
+    with pytest.raises(ValueError, match=portfolio_path):
+        CashEventFundingWorkflow.apply(_cash_event(), managed, benchmark)
+
+
+def test_funding_allows_event_effective_exactly_at_portfolio_creation() -> None:
+    created_at = datetime(2026, 8, 20, 14, tzinfo=UTC)
+    managed = replace(_managed_portfolio(), created_at=created_at)
+    benchmark = _benchmark_portfolio()
+    benchmark = BenchmarkPortfolio(
+        portfolio=replace(benchmark.portfolio, created_at=created_at),
+        benchmark_security=benchmark.benchmark_security,
+    )
+
+    result = CashEventFundingWorkflow.apply(_cash_event(), managed, benchmark)
+
+    assert result.applied_at == created_at
+
+
+def test_funding_rejects_shared_managed_and_benchmark_portfolio_identity() -> None:
+    managed = _managed_portfolio()
+    benchmark = _benchmark_portfolio()
+    benchmark = BenchmarkPortfolio(
+        portfolio=replace(benchmark.portfolio, portfolio_id=managed.portfolio_id),
+        benchmark_security=benchmark.benchmark_security,
+    )
+
+    with pytest.raises(ValueError, match="distinct"):
+        CashEventFundingWorkflow.apply(_cash_event(), managed, benchmark)

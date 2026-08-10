@@ -157,6 +157,7 @@ class Contribution:
     received_at: datetime
     source: str
     is_one_time_event: bool = True
+    cash_event_id: UUID | None = None
     contribution_id: UUID = field(default_factory=uuid4)
 
     def __post_init__(self) -> None:
@@ -167,6 +168,10 @@ class Contribution:
         object.__setattr__(self, "source", _require_non_empty_text(self.source, field_name="source"))
         if not self.is_one_time_event:
             raise ValueError("is_one_time_event must be True for the MVP")
+        if self.cash_event_id is not None and not isinstance(self.cash_event_id, UUID):
+            raise TypeError("cash_event_id must be a UUID or None")
+        if not isinstance(self.contribution_id, UUID):
+            raise TypeError("contribution_id must be a UUID")
 
 
 @dataclass(frozen=True, slots=True)
