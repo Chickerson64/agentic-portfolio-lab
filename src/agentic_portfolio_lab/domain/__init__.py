@@ -1,6 +1,7 @@
 """Framework-independent deterministic domain models."""
 
 from .approval import ApprovalDecision, DecisionApproval
+from .cash_events import CashEvent, CashEventFundingResult, CashEventFundingWorkflow
 from .portfolio import (
     CashBalance,
     Contribution,
@@ -48,6 +49,9 @@ from .value_manager_workflow import ValueManagerDecisionResult, ValueManagerDeci
 
 __all__ = [
     "ApprovalDecision",
+    "CashEvent",
+    "CashEventFundingResult",
+    "CashEventFundingWorkflow",
     "CashBalance",
     "ConstitutionLoader",
     "ConstitutionVersion",
