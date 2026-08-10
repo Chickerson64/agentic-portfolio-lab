@@ -31,6 +31,7 @@ from .valuation import (
     PriceObservation,
 )
 from .value_manager import ValueManager, ValueManagerDecisionContext
+from .value_manager_workflow import ValueManagerDecisionResult, ValueManagerDecisionWorkflow
 
 __all__ = [
     "CashBalance",
@@ -65,4 +66,6 @@ __all__ = [
     "ValueManager",
     "ValueManagerConstitution",
     "ValueManagerDecisionContext",
+    "ValueManagerDecisionResult",
+    "ValueManagerDecisionWorkflow",
 ]
