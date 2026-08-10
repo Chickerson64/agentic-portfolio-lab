@@ -8,6 +8,7 @@ from uuid import uuid4
 import pytest
 
 from agentic_portfolio_lab.domain.portfolio import CashBalance, Portfolio
+from agentic_portfolio_lab.domain.constitution import ConstitutionLoader
 from agentic_portfolio_lab.domain.recommendations import (
     PortfolioRecommendation,
     RecommendationEvidenceReference,
@@ -91,6 +92,10 @@ def _recommendation() -> PortfolioRecommendation:
     )
 
 
+def _constitution():
+    return ConstitutionLoader.load_value_manager_constitution()
+
+
 class StubValueManager:
     """A dependency-free implementation used only to verify the protocol."""
 
@@ -104,7 +109,7 @@ def test_value_manager_protocol_accepts_a_dependency_free_stub_returning_one_rec
     context = ValueManagerDecisionContext(
         portfolio=portfolio,
         research_batch=_batch(portfolio),
-        constitution_version=" value-v1.0.0 ",
+        constitution=_constitution(),
     )
     manager = StubValueManager()
 
@@ -118,7 +123,7 @@ def test_decision_context_is_immutable_and_derives_decision_lineage_from_the_bat
     context = ValueManagerDecisionContext(
         portfolio=portfolio,
         research_batch=batch,
-        constitution_version=" value-v1.0.0 ",
+        constitution=_constitution(),
         prior_reviewer_feedback=[" Clarify the valuation rationale. "],
     )
 
@@ -127,7 +132,7 @@ def test_decision_context_is_immutable_and_derives_decision_lineage_from_the_bat
     assert context.decision_cycle_id == batch.decision_cycle_id
     assert isinstance(context.prior_reviewer_feedback, tuple)
     with pytest.raises(FrozenInstanceError):
-        context.constitution_version = "value-v2.0.0"  # type: ignore[misc]
+        context.constitution = _constitution()  # type: ignore[misc]
 
 
 def test_decision_context_rejects_mismatched_batch_portfolio_lineage() -> None:
@@ -135,24 +140,24 @@ def test_decision_context_rejects_mismatched_batch_portfolio_lineage() -> None:
         ValueManagerDecisionContext(
             portfolio=_portfolio(),
             research_batch=_batch(_portfolio()),
-            constitution_version="value-v1.0.0",
+            constitution=_constitution(),
         )
 
 
-def test_decision_context_requires_a_value_batch_and_explicit_constitution_version() -> None:
+def test_decision_context_requires_a_value_batch_and_explicit_constitution() -> None:
     portfolio = _portfolio()
 
     with pytest.raises(ValueError, match="manager_type"):
         ValueManagerDecisionContext(
             portfolio=portfolio,
             research_batch=_batch(portfolio, manager_type="GROWTH"),
-            constitution_version="value-v1.0.0",
+            constitution=_constitution(),
         )
-    with pytest.raises(ValueError, match="constitution_version"):
+    with pytest.raises(TypeError, match="constitution"):
         ValueManagerDecisionContext(
             portfolio=portfolio,
             research_batch=_batch(portfolio),
-            constitution_version=" ",
+            constitution="value-v1.0.0",  # type: ignore[arg-type]
         )
 
 
@@ -172,6 +177,6 @@ def test_decision_context_rejects_malformed_reviewer_feedback(feedback: object) 
         ValueManagerDecisionContext(
             portfolio=portfolio,
             research_batch=_batch(portfolio),
-            constitution_version="value-v1.0.0",
+            constitution=_constitution(),
             prior_reviewer_feedback=feedback,  # type: ignore[arg-type]
         )

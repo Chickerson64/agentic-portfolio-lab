@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 from uuid import UUID
 
+from .constitution import ValueManagerConstitution
 from .portfolio import Portfolio, _require_non_empty_text
 from .recommendations import PortfolioRecommendation
 from .research import ResearchBatch
@@ -33,7 +34,7 @@ class ValueManagerDecisionContext:
 
     portfolio: Portfolio
     research_batch: ResearchBatch
-    constitution_version: str
+    constitution: ValueManagerConstitution
     prior_reviewer_feedback: tuple[str, ...] | list[str] = ()
 
     def __post_init__(self) -> None:
@@ -45,17 +46,19 @@ class ValueManagerDecisionContext:
             raise ValueError("research_batch portfolio_id must match portfolio")
         if self.research_batch.manager_type != _VALUE_MANAGER_TYPE:
             raise ValueError("research_batch manager_type must be VALUE")
-        object.__setattr__(
-            self,
-            "constitution_version",
-            _require_non_empty_text(self.constitution_version, field_name="constitution_version").strip(),
-        )
+        if not isinstance(self.constitution, ValueManagerConstitution):
+            raise TypeError("constitution must be a ValueManagerConstitution")
         object.__setattr__(self, "prior_reviewer_feedback", _normalize_feedback(self.prior_reviewer_feedback))
 
     @property
     def decision_cycle_id(self) -> UUID:
         """Return the decision-cycle lineage supplied by the ResearchBatch."""
         return self.research_batch.decision_cycle_id
+
+    @property
+    def constitution_version(self) -> str:
+        """Return the constitution's authoritative audit version identifier."""
+        return self.constitution.constitution_version
 
 
 @runtime_checkable
@@ -68,4 +71,3 @@ class ValueManager(Protocol):
 
     def decide(self, context: ValueManagerDecisionContext) -> PortfolioRecommendation:
         """Return exactly one manager-intent recommendation for the context."""
-

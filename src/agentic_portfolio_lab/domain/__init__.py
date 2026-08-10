@@ -7,6 +7,7 @@ from .portfolio import (
     Position,
     SecurityIdentity,
 )
+from .constitution import ConstitutionLoader, ConstitutionVersion, ValueManagerConstitution
 from .portfolio_service import PortfolioService, TargetPurchaseCalculation
 from .recommendations import (
     PortfolioRecommendation,
@@ -33,6 +34,8 @@ from .value_manager import ValueManager, ValueManagerDecisionContext
 
 __all__ = [
     "CashBalance",
+    "ConstitutionLoader",
+    "ConstitutionVersion",
     "BenchmarkPortfolio",
     "Contribution",
     "EvidenceItem",
@@ -60,5 +63,6 @@ __all__ = [
     "TargetPurchaseCalculation",
     "ValidatedTrade",
     "ValueManager",
+    "ValueManagerConstitution",
     "ValueManagerDecisionContext",
 ]
