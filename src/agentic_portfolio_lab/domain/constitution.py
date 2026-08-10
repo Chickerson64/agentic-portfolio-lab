@@ -3,13 +3,23 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 from pathlib import Path
 import re
+from uuid import UUID
 
-from .portfolio import _canonical_upper_text, _require_non_empty_text
+from .portfolio import (
+    SecurityIdentity,
+    _canonical_upper_text,
+    _require_non_empty_text,
+    _require_positive_decimal,
+)
+from .valuation import BenchmarkPortfolio
 
 _VALUE_MANAGER_TYPE = "VALUE"
 _SEMANTIC_VERSION_PATTERN = re.compile(r"^[a-z][a-z0-9-]*-v[0-9]+\.[0-9]+\.[0-9]+$")
+_PASSIVE_INDEX_BUY_ACTION = "BUY"
+NEXT_APPLICABLE_REGULAR_SESSION_CLOSE = "NEXT_APPLICABLE_REGULAR_SESSION_CLOSE"
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,6 +33,94 @@ class ConstitutionVersion:
         if not _SEMANTIC_VERSION_PATTERN.fullmatch(value):
             raise ValueError("constitution version must use the form '<manager>-v<major>.<minor>.<patch>'")
         object.__setattr__(self, "value", value)
+
+
+_PASSIVE_INDEX_VERSION = ConstitutionVersion("passive-index-v1.0.0")
+
+
+@dataclass(frozen=True, slots=True)
+class PassiveIndexInvestmentIntent:
+    """The complete deterministic instruction for later SPY deployment.
+
+    This intent does not calculate a price, quantity, or timestamp. Those facts
+    belong to the future deterministic validation and execution boundary.
+    """
+
+    benchmark_portfolio: BenchmarkPortfolio
+    action: str
+    deployment_rule: str
+    constitution_version: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.benchmark_portfolio, BenchmarkPortfolio):
+            raise TypeError("benchmark_portfolio must be a BenchmarkPortfolio")
+        if self.benchmark_portfolio.benchmark_security.ticker != "SPY":
+            raise ValueError("Passive Index intent security must be SPY")
+        _require_positive_decimal(self.benchmark_portfolio.portfolio.cash_balance.amount, field_name="investable_cash")
+        if _canonical_upper_text(self.action, field_name="action") != _PASSIVE_INDEX_BUY_ACTION:
+            raise ValueError("Passive Index intent action must be BUY")
+        object.__setattr__(self, "action", _PASSIVE_INDEX_BUY_ACTION)
+        if self.deployment_rule != NEXT_APPLICABLE_REGULAR_SESSION_CLOSE:
+            raise ValueError("deployment_rule must be NEXT_APPLICABLE_REGULAR_SESSION_CLOSE")
+        version = ConstitutionVersion(self.constitution_version)
+        if version.value != _PASSIVE_INDEX_VERSION.value:
+            raise ValueError("constitution_version must match the Passive Index Constitution")
+        object.__setattr__(self, "constitution_version", version.value)
+
+    @property
+    def benchmark_portfolio_id(self) -> UUID:
+        """The identity of the benchmark state this intent describes."""
+        return self.benchmark_portfolio.portfolio.portfolio_id
+
+    @property
+    def security(self) -> SecurityIdentity:
+        """The benchmark's only permitted security: SPY."""
+        return self.benchmark_portfolio.benchmark_security
+
+    @property
+    def investable_cash(self) -> Decimal:
+        """All currently available benchmark cash; partial deployment is unsupported."""
+        return self.benchmark_portfolio.portfolio.cash_balance.amount
+
+    @property
+    def currency(self) -> str:
+        """The benchmark cash and portfolio base currency."""
+        return self.benchmark_portfolio.portfolio.base_currency
+
+
+@dataclass(frozen=True, slots=True)
+class PassiveIndexConstitution:
+    """Mechanically deploy all benchmark cash into SPY at the stated close rule."""
+
+    version: ConstitutionVersion = _PASSIVE_INDEX_VERSION
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.version, ConstitutionVersion):
+            raise TypeError("version must be a ConstitutionVersion")
+        if self.version.value != _PASSIVE_INDEX_VERSION.value:
+            raise ValueError("Passive Index Constitution version must be passive-index-v1.0.0")
+
+    @property
+    def constitution_version(self) -> str:
+        return self.version.value
+
+    def evaluate(self, benchmark_portfolio: BenchmarkPortfolio) -> PassiveIndexInvestmentIntent | None:
+        """Return one all-cash SPY intent, or no intent when cash is unavailable."""
+        if not isinstance(benchmark_portfolio, BenchmarkPortfolio):
+            raise TypeError("benchmark_portfolio must be a BenchmarkPortfolio")
+        if benchmark_portfolio.benchmark_security.ticker != "SPY":
+            raise ValueError("benchmark security must be SPY")
+        investable_cash = benchmark_portfolio.portfolio.cash_balance.amount
+        if investable_cash < 0:
+            raise ValueError("investable cash must not be negative")
+        if investable_cash.is_zero():
+            return None
+        return PassiveIndexInvestmentIntent(
+            benchmark_portfolio=benchmark_portfolio,
+            action=_PASSIVE_INDEX_BUY_ACTION,
+            deployment_rule=NEXT_APPLICABLE_REGULAR_SESSION_CLOSE,
+            constitution_version=self.constitution_version,
+        )
 
 
 @dataclass(frozen=True, slots=True)

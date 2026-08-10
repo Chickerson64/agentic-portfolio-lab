@@ -9,7 +9,14 @@ from .portfolio import (
     Position,
     SecurityIdentity,
 )
-from .constitution import ConstitutionLoader, ConstitutionVersion, ValueManagerConstitution
+from .constitution import (
+    ConstitutionLoader,
+    ConstitutionVersion,
+    NEXT_APPLICABLE_REGULAR_SESSION_CLOSE,
+    PassiveIndexConstitution,
+    PassiveIndexInvestmentIntent,
+    ValueManagerConstitution,
+)
 from .decision_cycle import DecisionCycleOrchestrator, DecisionCycleResult, DecisionCycleStage
 from .journal import DecisionJournalEntry
 from .portfolio_service import PortfolioService, TargetPurchaseCalculation
@@ -61,6 +68,7 @@ __all__ = [
     "CashBalance",
     "ConstitutionLoader",
     "ConstitutionVersion",
+    "NEXT_APPLICABLE_REGULAR_SESSION_CLOSE",
     "BenchmarkPortfolio",
     "BenchmarkPerformanceHistory",
     "Contribution",
@@ -83,6 +91,8 @@ __all__ = [
     "PortfolioValuation",
     "Position",
     "PositionValuation",
+    "PassiveIndexConstitution",
+    "PassiveIndexInvestmentIntent",
     "PortfolioRecommendation",
     "PriceObservation",
     "RejectedProposalValidationRecord",
