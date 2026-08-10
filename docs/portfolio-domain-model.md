@@ -302,6 +302,7 @@ A Validated Trade is a trade proposal that has passed deterministic checks.
 - validation is deterministic
 - a validated trade still may not be executed
 - a validated trade must preserve the original proposal lineage
+- the associated validation result preserves the exact caller-supplied price observation used to validate the trade, including its security, price, provider, market date, timestamp, currency, and price convention
 
 ### 8a. Rejected Proposal Validation Record
 

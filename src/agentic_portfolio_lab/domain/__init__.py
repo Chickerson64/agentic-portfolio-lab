@@ -16,6 +16,7 @@ from .recommendations import (
     ReviewTrigger,
     ReviewTriggerType,
 )
+from .risk_validation import DeterministicRiskValidator, RiskRuleResult, RiskValidationResult, RiskValidationStatus
 from .research import EvidenceItem, MissingData, MissingDataReason, ResearchBatch, ResearchPacket, ResearchSection
 from .trades import (
     ExecutedTrade,
@@ -39,6 +40,7 @@ __all__ = [
     "ConstitutionVersion",
     "BenchmarkPortfolio",
     "Contribution",
+    "DeterministicRiskValidator",
     "EvidenceItem",
     "ExecutedTrade",
     "MissingData",
@@ -59,6 +61,9 @@ __all__ = [
     "RecommendationEvidenceReference",
     "ReviewTrigger",
     "ReviewTriggerType",
+    "RiskRuleResult",
+    "RiskValidationResult",
+    "RiskValidationStatus",
     "SecurityIdentity",
     "TradeProposal",
     "TargetPurchaseCalculation",
