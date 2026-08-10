@@ -18,6 +18,15 @@ from .recommendations import (
 )
 from .risk_validation import DeterministicRiskValidator, RiskRuleResult, RiskValidationResult, RiskValidationStatus
 from .research import EvidenceItem, MissingData, MissingDataReason, ResearchBatch, ResearchPacket, ResearchSection
+from .reviewer import (
+    AIReviewer,
+    AIReviewerReviewContext,
+    ReviewDecision,
+    ReviewFinding,
+    ReviewFindingCategory,
+    ReviewFindingSeverity,
+    ReviewerResult,
+)
 from .trades import (
     ExecutedTrade,
     RejectedProposalValidationRecord,
@@ -57,6 +66,13 @@ __all__ = [
     "ResearchBatch",
     "ResearchPacket",
     "ResearchSection",
+    "AIReviewer",
+    "AIReviewerReviewContext",
+    "ReviewDecision",
+    "ReviewFinding",
+    "ReviewFindingCategory",
+    "ReviewFindingSeverity",
+    "ReviewerResult",
     "RecommendationAction",
     "RecommendationEvidenceReference",
     "ReviewTrigger",
