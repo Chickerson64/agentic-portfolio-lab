@@ -34,6 +34,7 @@ from .recommendations import (
     ReviewTrigger,
     ReviewTriggerType,
 )
+from .openai_value_manager import OpenAIValueManager, OpenAIValueManagerMetadata
 from .risk_validation import DeterministicRiskValidator, RiskRuleResult, RiskValidationResult, RiskValidationStatus
 from .research import EvidenceItem, MissingData, MissingDataReason, ResearchBatch, ResearchPacket, ResearchSection
 from .reviewer import (
@@ -111,6 +112,8 @@ __all__ = [
     "RecommendationEvidenceReference",
     "ReviewTrigger",
     "ReviewTriggerType",
+    "OpenAIValueManager",
+    "OpenAIValueManagerMetadata",
     "RiskRuleResult",
     "RiskValidationResult",
     "RiskValidationStatus",
