@@ -11,6 +11,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from agentic_portfolio_lab.application.local_state import LocalRunMetadata, PersistedRunState
+from agentic_portfolio_lab.application.market_configuration import SPY_BENCHMARK
 from agentic_portfolio_lab.application.local_state_codec import decode_run_state, encode
 from agentic_portfolio_lab.dashboard import DecisionHistoryArtifacts
 from agentic_portfolio_lab.domain.cash_events import CashEvent, CashEventFundingWorkflow
@@ -270,7 +271,10 @@ class SQLiteLocalRunStore:
     @staticmethod
     def _initial_state(initialized_at: datetime) -> PersistedRunState:
         managed = Portfolio(uuid4(), "Managed Value", "USD", Decimal("1000"), CashBalance("USD", Decimal("0")), initialized_at)
-        benchmark = BenchmarkPortfolio(Portfolio(uuid4(), "SPY Benchmark", "USD", Decimal("1000"), CashBalance("USD", Decimal("0")), initialized_at), SecurityIdentity("SPY", "ETF", "NYSEARCA", "USD"))
+        benchmark = BenchmarkPortfolio(
+            Portfolio(uuid4(), "SPY Benchmark", "USD", Decimal("1000"), CashBalance("USD", Decimal("0")), initialized_at),
+            SPY_BENCHMARK,
+        )
         funding = CashEventFundingWorkflow.apply(CashEvent(Decimal("1000"), "USD", initialized_at, "INITIAL_FUNDING"), managed, benchmark)
         funded_managed, funded_benchmark = funding.funded_managed_portfolio, funding.funded_benchmark_portfolio
         valuation_kwargs = dict(as_of_timestamp=initialized_at, market_date=initialized_at.date(), source_price_timestamp=initialized_at, source_provider_identity="initial-cash-event", price_convention="cash-only-baseline")
@@ -371,6 +375,7 @@ class SQLiteMvpReadState:
             history_entries=state.history_entries,
             source_metadata=self.source_metadata,
             research_batches=state.research_batches,
+            benchmark_fulfillments=state.benchmark_fulfillments,
             benchmark_fulfillment_status=getattr(state, "benchmark_fulfillment_status", "PENDING_NO_ELIGIBLE_PRICE"),
         )
 

@@ -11,6 +11,7 @@ from agentic_portfolio_lab.domain.approval import DecisionApproval
 from agentic_portfolio_lab.domain.journal import DecisionJournalEntry
 from agentic_portfolio_lab.domain.performance import BenchmarkPerformanceHistory, PerformanceComparison, PortfolioPerformanceHistory
 from agentic_portfolio_lab.domain.portfolio import SecurityIdentity
+from agentic_portfolio_lab.domain.benchmark_fulfillment import PassiveIndexFulfillment
 
 from .models import (
     BenchmarkSnapshotResponse,
@@ -51,6 +52,7 @@ class MvpReadStateSnapshot:
     history_entries: tuple[DecisionHistoryArtifacts, ...]
     source_metadata: StateSourceMetadata
     research_batches: tuple = ()
+    benchmark_fulfillments: tuple[PassiveIndexFulfillment, ...] = ()
     benchmark_fulfillment_status: str = "PENDING_NO_ELIGIBLE_PRICE"
 
     @classmethod
@@ -68,6 +70,7 @@ class MvpReadStateSnapshot:
                 synthetic=True,
             ),
             research_batches=(),
+            benchmark_fulfillments=(),
             benchmark_fulfillment_status="PENDING_NO_ELIGIBLE_PRICE",
         )
 
@@ -83,6 +86,7 @@ class MvpReadState(Protocol):
     history_entries: tuple[DecisionHistoryArtifacts, ...]
     source_metadata: StateSourceMetadata
     benchmark_fulfillment_status: str
+    benchmark_fulfillments: tuple[PassiveIndexFulfillment, ...]
 
 
 class LatestResourceNotFound(ValueError):
