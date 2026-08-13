@@ -17,6 +17,14 @@ export const apiClient = {
     if (!response.ok) throw new ApiError(response.status, `The API returned ${response.status}.`);
     return response.json();
   },
+  async post(path) {
+    let response;
+    try { response = await fetch(`${API_BASE}${path}`, { method: "POST", headers: { Accept: "application/json" } }); }
+    catch { throw new ApiError(0, "The local API is unavailable. Start the FastAPI server and try again."); }
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) throw new ApiError(response.status, payload?.detail?.message || `The API returned ${response.status}.`);
+    return payload;
+  },
 };
 
 function contractFailure(context, expectation) { throw new ApiContractError(`${context} must include ${expectation}.`); }
@@ -333,6 +341,16 @@ export function normalizeHealth(payload) {
   };
 }
 
+export function normalizePriceRefresh(payload) {
+  const context = "price refresh";
+  return {
+    refreshedTickers: textList(field(payload, "refreshed_tickers", context), `${context}.refreshed_tickers`),
+    providerIdentity: text(field(payload, "provider_identity", context), `${context}.provider_identity`),
+    latestSourceTimestamp: text(field(payload, "latest_source_timestamp", context), `${context}.latest_source_timestamp`),
+    priceConvention: text(field(payload, "price_convention", context), `${context}.price_convention`),
+  };
+}
+
 export async function loadApplication() {
   const [health, dashboard, decision, research, history] = await Promise.all([
     apiClient.get("/health"),
@@ -351,6 +369,7 @@ const dateTime = (value) => value ? new Date(value).toLocaleString() : "—";
 const initials = (ticker) => string(ticker, "—").slice(0, 2);
 const esc = (value) => string(value).replace(/[&<>'"]/g, (character) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", "'":"&#39;", '"':"&quot;" })[character]);
 const app = typeof document === "undefined" ? null : document.querySelector("#app");
+let refreshStatus = null;
 
 function chart(points) {
   if (!points.length) return `<div class="empty-state">No performance snapshots are available.</div>`;
@@ -392,7 +411,7 @@ function renderHistory(state) {
 function empty(title, message) { return `<section class="empty-state"><span class="kicker">No data</span><h1>${esc(title)}</h1><p>${esc(message)}</p></section>`; }
 function render(state) {
   app.innerHTML = nav(); document.querySelector("#portfolio-name").textContent = state.dashboard.portfolio.portfolioName;
-  document.querySelector("#health-status").textContent = `${state.health.stateMode} · ${state.health.persisted ? "persisted" : "in-memory"}${state.health.synthetic ? " · demo" : ""}`;
+  document.querySelector("#health-status").textContent = refreshStatus || `${state.health.stateMode} · ${state.health.persisted ? "persisted" : "in-memory"}${state.health.synthetic ? " · demo" : ""}`;
   renderOverview(state); renderDecision(state); renderResearch(state); renderPortfolio(state); renderHistory(state);
   document.querySelectorAll("[data-view],[data-view-jump]").forEach((button) => button.addEventListener("click", () => { const view = button.dataset.view || button.dataset.viewJump; document.querySelectorAll(".view").forEach((section) => section.classList.toggle("active", section.id === view)); document.querySelectorAll("[data-view]").forEach((node) => node.classList.toggle("active", node.dataset.view === view)); }));
 }
@@ -403,4 +422,18 @@ function renderFailure(error) {
   app.replaceChildren(node); document.querySelector("#health-status").textContent = "API unavailable";
 }
 export async function start() { app.innerHTML = `<section class="loading-state"><span class="spinner"></span><h1>Loading deterministic portfolio state</h1><p>Reading the local API contract.</p></section>`; try { render(await loadApplication()); } catch (error) { renderFailure(error); } }
-if (app) start();
+export async function refreshPrices({ button = document.querySelector("#refresh-prices"), status = document.querySelector("#health-status"), reload = start } = {}) {
+  button.disabled = true; button.textContent = "Refreshing prices…"; status.textContent = "Requesting Twelve Data observations…";
+  try {
+    const result = normalizePriceRefresh(await apiClient.post("/commands/refresh-prices"));
+    refreshStatus = `Prices refreshed from ${result.providerIdentity} · ${dateTime(result.latestSourceTimestamp)} · ${result.priceConvention}`;
+    status.textContent = refreshStatus;
+    await reload();
+  } catch (error) {
+    refreshStatus = `Price refresh failed: ${error.message}`;
+    status.textContent = refreshStatus;
+  } finally {
+    button.disabled = false; button.textContent = "Refresh prices";
+  }
+}
+if (app) { document.querySelector("#refresh-prices").addEventListener("click", refreshPrices); start(); }

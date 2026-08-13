@@ -8,21 +8,31 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from agentic_portfolio_lab.dashboard_demo import build_demo_dashboard_data
-from agentic_portfolio_lab.infrastructure.sqlite_local_state import SQLiteLocalRunStore, SQLiteMvpReadState
+from agentic_portfolio_lab.application.market_configuration import CANDIDATE_UNIVERSE, SPY_BENCHMARK
+from agentic_portfolio_lab.application.refresh_prices import InMemoryPriceRefreshState, RefreshPricesService
+from agentic_portfolio_lab.infrastructure.sqlite_local_state import SQLiteLocalRunStore, SQLiteMvpReadState, SQLitePriceRefreshState
+from agentic_portfolio_lab.infrastructure.twelve_data import TwelveDataMarketPriceProvider
 
 from .queries import MvpReadState, MvpReadStateSnapshot
 from .routes import create_router
 
 
-def create_app(*, state: MvpReadState | None = None, database_path: str | None = None) -> FastAPI:
+def create_app(
+    *,
+    state: MvpReadState | None = None,
+    database_path: str | None = None,
+    refresh_service: RefreshPricesService | None = None,
+) -> FastAPI:
     """Create the HTTP adapter with explicit, replaceable application state."""
     if state is not None and database_path is not None:
         raise ValueError("state and database_path are mutually exclusive")
     configured_path = database_path if database_path is not None else os.environ.get("AGENTIC_PORTFOLIO_LAB_DB_PATH")
+    store: SQLiteLocalRunStore | None = None
     if state is not None:
         source = state
     elif configured_path:
-        source = SQLiteMvpReadState(SQLiteLocalRunStore(configured_path))
+        store = SQLiteLocalRunStore(configured_path)
+        source = SQLiteMvpReadState(store)
     else:
         source = MvpReadStateSnapshot.from_dashboard_demo(build_demo_dashboard_data())
     app = FastAPI(title="Agentic Portfolio Lab", version="1.0.0")
@@ -32,10 +42,16 @@ def create_app(*, state: MvpReadState | None = None, database_path: str | None =
         CORSMiddleware,
         allow_origins=["http://localhost:8001", "http://127.0.0.1:8001"],
         allow_credentials=False,
-        allow_methods=["GET"],
+        allow_methods=["GET", "POST"],
         allow_headers=[],
     )
-    app.include_router(create_router(source))
+    service = refresh_service or RefreshPricesService(
+        provider=TwelveDataMarketPriceProvider(),
+        state=SQLitePriceRefreshState(store) if store is not None else InMemoryPriceRefreshState(),
+        candidate_universe=CANDIDATE_UNIVERSE,
+        spy_benchmark=SPY_BENCHMARK,
+    )
+    app.include_router(create_router(source, refresh_service=service))
     return app
 
 

@@ -10,6 +10,7 @@ from agentic_portfolio_lab.dashboard_demo import DashboardDemoData
 from agentic_portfolio_lab.domain.approval import DecisionApproval
 from agentic_portfolio_lab.domain.journal import DecisionJournalEntry
 from agentic_portfolio_lab.domain.performance import BenchmarkPerformanceHistory, PerformanceComparison, PortfolioPerformanceHistory
+from agentic_portfolio_lab.domain.portfolio import SecurityIdentity
 
 from .models import (
     BenchmarkSnapshotResponse,
@@ -119,6 +120,10 @@ class MvpQueryService:
             persisted=metadata.persisted,
             synthetic=metadata.synthetic,
         )
+
+    def held_securities(self) -> tuple[SecurityIdentity, ...]:
+        """Expose current managed holdings to command orchestration only."""
+        return tuple(position.security for position in self._state.managed_history.snapshots[-1].portfolio.positions)
 
     def portfolio(self) -> PortfolioSnapshotResponse:
         return portfolio_snapshot_response(self._state.managed_history.snapshots[-1])

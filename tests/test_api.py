@@ -12,8 +12,36 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from agentic_portfolio_lab.api.app import create_app
+from agentic_portfolio_lab.application.market_configuration import CANDIDATE_UNIVERSE, SPY_BENCHMARK
+from agentic_portfolio_lab.application.refresh_prices import InMemoryPriceRefreshState, RefreshPricesService
+from agentic_portfolio_lab.domain.market_prices import MarketPriceError
+from agentic_portfolio_lab.domain.valuation import PriceObservation
 from agentic_portfolio_lab.api.queries import MvpReadStateSnapshot, StateSourceMetadata
 from agentic_portfolio_lab.dashboard_demo import build_demo_dashboard_data
+from datetime import date, datetime
+from decimal import Decimal
+
+
+class _RefreshProvider:
+    def __init__(self, error: Exception | None = None) -> None:
+        self.error = error
+
+    def get_observation(self, security):
+        if self.error:
+            raise self.error
+        return PriceObservation(
+            security=security, observed_price=Decimal("101.2500"), currency="USD", market_date=date(2026, 8, 13),
+            observed_at=datetime(2026, 8, 13, 20, 0, tzinfo=timezone.utc), source_provider_identity="fake-provider",
+            price_convention="fake-price",
+        )
+
+
+def _refresh_client(provider: _RefreshProvider) -> tuple[TestClient, InMemoryPriceRefreshState]:
+    refresh_state = InMemoryPriceRefreshState()
+    refresh_service = RefreshPricesService(
+        provider=provider, state=refresh_state, candidate_universe=CANDIDATE_UNIVERSE, spy_benchmark=SPY_BENCHMARK,
+    )
+    return TestClient(create_app(refresh_service=refresh_service)), refresh_state
 
 
 def _client() -> TestClient:
@@ -226,7 +254,7 @@ def test_domain_import_does_not_depend_on_fastapi() -> None:
     assert result.returncode == 0, result.stderr
 
 
-def test_local_frontend_cors_allowlist_is_narrow_and_get_only() -> None:
+def test_local_frontend_cors_allowlist_is_narrow_and_allows_command_post() -> None:
     client = _client()
 
     def preflight(origin: str, method: str) -> object:
@@ -247,11 +275,34 @@ def test_local_frontend_cors_allowlist_is_narrow_and_get_only() -> None:
             "Access-Control-Request-Method": "GET",
         },
     )
-    unsupported_method = preflight("http://localhost:8001", "POST")
+    unsupported_method = preflight("http://localhost:8001", "PUT")
 
     assert localhost.status_code == loopback.status_code == 200
     assert localhost.headers["access-control-allow-origin"] == "http://localhost:8001"
     assert loopback.headers["access-control-allow-origin"] == "http://127.0.0.1:8001"
-    assert localhost.headers["access-control-allow-methods"] == "GET"
+    assert localhost.headers["access-control-allow-methods"] == "GET, POST"
     assert denied.status_code == 400
     assert unsupported_method.status_code == 400
+
+
+def test_refresh_prices_command_returns_provider_metadata_and_includes_spy() -> None:
+    client, refresh_state = _refresh_client(_RefreshProvider())
+    response = client.post("/commands/refresh-prices")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "refreshed_tickers": ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "JPM", "V", "COST", "SPY"],
+        "provider_identity": "fake-provider",
+        "latest_source_timestamp": "2026-08-13T20:00:00+00:00",
+        "price_convention": "fake-price",
+    }
+    assert refresh_state.latest_observations[-1].security.ticker == "SPY"
+
+
+def test_refresh_prices_command_reports_provider_failure() -> None:
+    client, refresh_state = _refresh_client(_RefreshProvider(MarketPriceError("provider unavailable")))
+    response = client.post("/commands/refresh-prices")
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == {"code": "market_price_unavailable", "message": "provider unavailable"}
+    assert refresh_state.latest_observations == ()

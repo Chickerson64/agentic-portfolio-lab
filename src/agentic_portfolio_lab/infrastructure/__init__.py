@@ -1,1 +1,1 @@
-"""Infrastructure adapters kept outside the framework-independent domain."""
+"""Infrastructure adapters; provider and SQLite details stay outside the domain."""

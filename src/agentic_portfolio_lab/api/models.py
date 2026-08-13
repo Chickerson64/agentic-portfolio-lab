@@ -265,6 +265,13 @@ class HealthResponse(ApiModel):
     synthetic: bool
 
 
+class PriceRefreshResponse(ApiModel):
+    refreshed_tickers: tuple[str, ...]
+    provider_identity: str
+    latest_source_timestamp: str
+    price_convention: str
+
+
 class DashboardResponse(ApiModel):
     portfolio: PortfolioSnapshotResponse
     benchmark: BenchmarkSnapshotResponse

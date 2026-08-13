@@ -1,1 +1,1 @@
-"""Small application-layer boundaries for the local paper-trading run."""
+"""Application services, configuration, and local-run boundaries."""

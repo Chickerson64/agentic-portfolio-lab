@@ -10,6 +10,8 @@ const {
   normalizeDecision,
   normalizeResearch,
   normalizeHistory,
+  normalizePriceRefresh,
+  refreshPrices,
 } = await import("./app.js");
 
 const security = (ticker = "MSFT") => ({ ticker, security_type: "EQUITY", exchange: "NASDAQ", currency: "USD" });
@@ -95,6 +97,50 @@ assert.equal(historyView.entries[1].execution.executedTradeId, "executed-1");
 assert.equal(historyView.entries[1].execution.validatedTradeId, "validated-1");
 assert.deepEqual(normalizeHistory({ entries_newest_first: [], chart_points_oldest_first: [] }), { entries: [], chartPoints: [] });
 assert.throws(() => normalizeHistory(null), ApiContractError);
+
+assert.deepEqual(
+  normalizePriceRefresh({ refreshed_tickers: ["MSFT", "SPY"], provider_identity: "twelve-data", latest_source_timestamp: "2026-08-13T20:00:00+00:00", price_convention: "twelve-data-quote-close-field" }),
+  { refreshedTickers: ["MSFT", "SPY"], providerIdentity: "twelve-data", latestSourceTimestamp: "2026-08-13T20:00:00+00:00", priceConvention: "twelve-data-quote-close-field" },
+);
+
+const deferred = () => {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve };
+};
+const refreshButton = { disabled: false, textContent: "Refresh prices" };
+const refreshStatus = { textContent: "" };
+const pendingPost = deferred();
+let postRequest;
+let reloadCount = 0;
+globalThis.fetch = async (url, options) => {
+  postRequest = { url, options };
+  return pendingPost.promise;
+};
+const successfulRefresh = refreshPrices({ button: refreshButton, status: refreshStatus, reload: async () => { reloadCount += 1; } });
+assert.equal(refreshButton.disabled, true);
+assert.equal(refreshButton.textContent, "Refreshing prices…");
+assert.equal(refreshStatus.textContent, "Requesting Twelve Data observations…");
+pendingPost.resolve({ ok: true, json: async () => ({ refreshed_tickers: ["MSFT", "SPY"], provider_identity: "twelve-data", latest_source_timestamp: "2026-08-13T20:00:00+00:00", price_convention: "twelve-data-quote-close-field" }) });
+await successfulRefresh;
+assert.equal(new URL(postRequest.url).pathname, "/commands/refresh-prices");
+assert.equal(postRequest.options.method, "POST");
+assert.equal(reloadCount, 1);
+assert.equal(refreshButton.disabled, false);
+assert.equal(refreshButton.textContent, "Refresh prices");
+assert.match(refreshStatus.textContent, /Prices refreshed from twelve-data/);
+assert.match(refreshStatus.textContent, /twelve-data-quote-close-field/);
+
+const failingButton = { disabled: false, textContent: "Refresh prices" };
+const failingStatus = { textContent: "" };
+let failedReloadCount = 0;
+globalThis.fetch = async () => ({ ok: false, status: 502, json: async () => ({ detail: { message: "provider unavailable" } }) });
+await refreshPrices({ button: failingButton, status: failingStatus, reload: async () => { failedReloadCount += 1; } });
+assert.equal(failedReloadCount, 0);
+assert.equal(failingButton.disabled, false);
+assert.equal(failingButton.textContent, "Refresh prices");
+assert.equal(failingStatus.textContent, "Price refresh failed: provider unavailable");
+assert.doesNotMatch(failingStatus.textContent, /Prices refreshed/);
 
 const originalFetch = globalThis.fetch;
 globalThis.fetch = async (url) => {
