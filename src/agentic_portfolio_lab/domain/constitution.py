@@ -20,6 +20,7 @@ _VALUE_MANAGER_TYPE = "VALUE"
 _SEMANTIC_VERSION_PATTERN = re.compile(r"^[a-z][a-z0-9-]*-v[0-9]+\.[0-9]+\.[0-9]+$")
 _PASSIVE_INDEX_BUY_ACTION = "BUY"
 NEXT_APPLICABLE_REGULAR_SESSION_CLOSE = "NEXT_APPLICABLE_REGULAR_SESSION_CLOSE"
+PROVIDER_ATTRIBUTED_PAPER_QUOTE = "PROVIDER_ATTRIBUTED_PAPER_QUOTE"
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +37,7 @@ class ConstitutionVersion:
 
 
 _PASSIVE_INDEX_VERSION = ConstitutionVersion("passive-index-v1.0.0")
+_PASSIVE_INDEX_PAPER_VERSION = ConstitutionVersion("passive-index-paper-v1.0.0")
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,11 +62,16 @@ class PassiveIndexInvestmentIntent:
         if _canonical_upper_text(self.action, field_name="action") != _PASSIVE_INDEX_BUY_ACTION:
             raise ValueError("Passive Index intent action must be BUY")
         object.__setattr__(self, "action", _PASSIVE_INDEX_BUY_ACTION)
-        if self.deployment_rule != NEXT_APPLICABLE_REGULAR_SESSION_CLOSE:
-            raise ValueError("deployment_rule must be NEXT_APPLICABLE_REGULAR_SESSION_CLOSE")
         version = ConstitutionVersion(self.constitution_version)
-        if version.value != _PASSIVE_INDEX_VERSION.value:
-            raise ValueError("constitution_version must match the Passive Index Constitution")
+        if version.value not in {_PASSIVE_INDEX_VERSION.value, _PASSIVE_INDEX_PAPER_VERSION.value}:
+            raise ValueError("constitution_version must match an approved Passive Index Constitution")
+        expected_rule = (
+            NEXT_APPLICABLE_REGULAR_SESSION_CLOSE
+            if version.value == _PASSIVE_INDEX_VERSION.value
+            else PROVIDER_ATTRIBUTED_PAPER_QUOTE
+        )
+        if self.deployment_rule != expected_rule:
+            raise ValueError(f"deployment_rule must be {expected_rule}")
         object.__setattr__(self, "constitution_version", version.value)
 
     @property
@@ -97,8 +104,13 @@ class PassiveIndexConstitution:
     def __post_init__(self) -> None:
         if not isinstance(self.version, ConstitutionVersion):
             raise TypeError("version must be a ConstitutionVersion")
-        if self.version.value != _PASSIVE_INDEX_VERSION.value:
-            raise ValueError("Passive Index Constitution version must be passive-index-v1.0.0")
+        if self.version.value not in {_PASSIVE_INDEX_VERSION.value, _PASSIVE_INDEX_PAPER_VERSION.value}:
+            raise ValueError("Passive Index Constitution version is not approved")
+
+    @classmethod
+    def paper_simulation(cls) -> "PassiveIndexConstitution":
+        """Quote-attributed paper policy; it makes no session-close claim."""
+        return cls(_PASSIVE_INDEX_PAPER_VERSION)
 
     @property
     def constitution_version(self) -> str:
@@ -118,7 +130,11 @@ class PassiveIndexConstitution:
         return PassiveIndexInvestmentIntent(
             benchmark_portfolio=benchmark_portfolio,
             action=_PASSIVE_INDEX_BUY_ACTION,
-            deployment_rule=NEXT_APPLICABLE_REGULAR_SESSION_CLOSE,
+            deployment_rule=(
+                NEXT_APPLICABLE_REGULAR_SESSION_CLOSE
+                if self.version.value == _PASSIVE_INDEX_VERSION.value
+                else PROVIDER_ATTRIBUTED_PAPER_QUOTE
+            ),
             constitution_version=self.constitution_version,
         )
 

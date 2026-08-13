@@ -281,6 +281,32 @@ class BuildResearchResponse(ApiModel):
     as_of_timestamp: str
 
 
+class CashEventCommand(ApiModel):
+    amount: Decimal
+    currency: str
+    source: str
+    effective_at: datetime
+
+
+class CashEventResponse(ApiModel):
+    event_id: str
+    managed_cash: str
+    benchmark_cash: str
+    currency: str
+    effective_at: str
+
+
+class BenchmarkFulfillmentResponse(ApiModel):
+    status: str
+    fulfillment_id: str | None
+    quantity: str | None
+    notional: str | None
+    provider_identity: str | None
+    observed_at: str | None
+    market_date: str | None
+    price_convention: str | None
+
+
 class DashboardResponse(ApiModel):
     portfolio: PortfolioSnapshotResponse
     benchmark: BenchmarkSnapshotResponse
@@ -288,6 +314,7 @@ class DashboardResponse(ApiModel):
     latest_decision: DecisionMemoResponse | None
     research: ResearchBatchResponse | None
     history: HistoryResponse
+    benchmark_fulfillment_status: str
 
 
 def security_response(security: SecurityIdentity) -> SecurityResponse:

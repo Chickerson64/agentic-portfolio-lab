@@ -21,10 +21,10 @@ def _types() -> dict[str, type[object]]:
     # Imports are intentionally explicit: only known local domain/application
     # artifacts may be rehydrated from a durable database document.
     from agentic_portfolio_lab.dashboard import DecisionHistoryArtifacts
-    from agentic_portfolio_lab.domain import approval, cash_events, constitution, journal, performance, portfolio, recommendations, research, reviewer, risk_validation, simulated_execution, trades, valuation, value_manager, value_manager_workflow
+    from agentic_portfolio_lab.domain import approval, benchmark_fulfillment, cash_events, constitution, journal, performance, portfolio, recommendations, research, reviewer, risk_validation, simulated_execution, trades, valuation, value_manager, value_manager_workflow
 
     modules = (
-        approval, cash_events, constitution, journal, performance, portfolio,
+        approval, benchmark_fulfillment, cash_events, constitution, journal, performance, portfolio,
         recommendations, research, reviewer, risk_validation, simulated_execution,
         trades, valuation, value_manager, value_manager_workflow,
     )
@@ -163,19 +163,56 @@ def decode_run_state(value: Any) -> PersistedRunState:
         _canonical_history_entry(entry, journals=journals, approvals=approvals_by_cycle, executions=executions_by_cycle)
         for entry in state.history_entries
     )
+    observations = tuple(state.price_observations)
+    observations_by_identity = {(item.security, item.observed_at): item for item in observations}
+    from agentic_portfolio_lab.domain.performance import BenchmarkPerformanceHistory, PerformanceSnapshot, PortfolioPerformanceHistory
+    funding_by_id = {item.cash_event.event_id: item.cash_event for item in state.funding_results}
+
+    def canonical_history(history):
+        snapshots = tuple(
+            PerformanceSnapshot(
+                snapshot.portfolio, snapshot.valuation, snapshot.baseline_value,
+                snapshot.cumulative_external_contributions,
+                tuple(funding_by_id[event.event_id] for event in snapshot.cash_events),
+            )
+            for snapshot in history.snapshots
+        )
+        if isinstance(history, BenchmarkPerformanceHistory):
+            return BenchmarkPerformanceHistory(history.benchmark_portfolio_id, history.benchmark_security, history.currency, snapshots)
+        return PortfolioPerformanceHistory(history.portfolio_id, history.currency, snapshots)
+
+    managed_history = canonical_history(state.managed_history)
+    benchmark_history = canonical_history(state.benchmark_history)
+    from agentic_portfolio_lab.domain.benchmark_fulfillment import PassiveIndexFulfillment
+    canonical_fulfillments = tuple(
+        PassiveIndexFulfillment(
+            intent=item.intent,
+            price_observation=observations_by_identity[(item.price_observation.security, item.price_observation.observed_at)],
+            original_benchmark_portfolio=item.original_benchmark_portfolio,
+            fulfilled_benchmark_portfolio=item.fulfilled_benchmark_portfolio,
+            target_purchase=item.target_purchase,
+            quantity=item.quantity,
+            notional=item.notional,
+            fulfilled_at=item.fulfilled_at,
+            fulfillment_id=item.fulfillment_id,
+        )
+        for item in getattr(state, "benchmark_fulfillments", ())
+    )
     return PersistedRunState(
         metadata=state.metadata,
         managed_portfolio=state.managed_portfolio,
         benchmark_portfolio=state.benchmark_portfolio,
-        managed_history=state.managed_history,
-        benchmark_history=state.benchmark_history,
+        managed_history=managed_history,
+        benchmark_history=benchmark_history,
         funding_results=state.funding_results,
-        price_observations=state.price_observations,
+        price_observations=observations,
         research_batches=state.research_batches,
         journal_entries=state.journal_entries,
         approvals=approvals,
         executions=executions,
         history_entries=history_entries,
+        benchmark_fulfillments=canonical_fulfillments,
+        benchmark_fulfillment_status=getattr(state, "benchmark_fulfillment_status", "PENDING_NO_ELIGIBLE_PRICE"),
     )
 
 

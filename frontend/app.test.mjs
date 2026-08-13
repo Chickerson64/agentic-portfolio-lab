@@ -62,7 +62,7 @@ const history = () => ({
 const dashboard = () => ({
   portfolio: portfolio(), benchmark: { benchmark_security: security("SPY"), snapshot: portfolio("benchmark-1") },
   performance: { managed_portfolio_id: "portfolio-1", benchmark_portfolio_id: "benchmark-1", currency: "USD", managed_cumulative_return: "0.12", benchmark_cumulative_return: "0.08", absolute_alpha: "0.04", relative_alpha: "0.037", as_of_timestamp: "2026-08-11T12:00:00+00:00" },
-  latest_decision: decision(), research: research(), history: history(),
+  latest_decision: decision(), research: research(), history: history(), benchmark_fulfillment_status: "PENDING_NO_ELIGIBLE_PRICE",
 });
 
 const dashboardView = normalizeDashboard(dashboard());

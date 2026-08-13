@@ -51,6 +51,7 @@ class MvpReadStateSnapshot:
     history_entries: tuple[DecisionHistoryArtifacts, ...]
     source_metadata: StateSourceMetadata
     research_batches: tuple = ()
+    benchmark_fulfillment_status: str = "PENDING_NO_ELIGIBLE_PRICE"
 
     @classmethod
     def from_dashboard_demo(cls, data: DashboardDemoData) -> "MvpReadStateSnapshot":
@@ -67,6 +68,7 @@ class MvpReadStateSnapshot:
                 synthetic=True,
             ),
             research_batches=(),
+            benchmark_fulfillment_status="PENDING_NO_ELIGIBLE_PRICE",
         )
 
 
@@ -80,6 +82,7 @@ class MvpReadState(Protocol):
     latest_approval: DecisionApproval | None
     history_entries: tuple[DecisionHistoryArtifacts, ...]
     source_metadata: StateSourceMetadata
+    benchmark_fulfillment_status: str
 
 
 class LatestResourceNotFound(ValueError):
@@ -200,4 +203,5 @@ class MvpQueryService:
             latest_decision=latest_decision,
             research=research,
             history=self.decisions(),
+            benchmark_fulfillment_status=getattr(self._state, "benchmark_fulfillment_status", "PENDING_NO_ELIGIBLE_PRICE"),
         )

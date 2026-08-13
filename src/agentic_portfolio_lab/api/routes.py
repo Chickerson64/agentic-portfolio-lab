@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from fastapi import APIRouter, HTTPException
 
 from agentic_portfolio_lab.application.refresh_prices import RefreshPricesService
 from agentic_portfolio_lab.application.build_research import BuildResearchService
+from agentic_portfolio_lab.application.wave2_commands import BenchmarkFulfillmentService, CashEventService
 from agentic_portfolio_lab.domain.market_prices import MarketPriceConfigurationError, MarketPriceError
 from agentic_portfolio_lab.domain.research_provider import ResearchProviderConfigurationError, ResearchProviderError
 
@@ -20,6 +23,9 @@ from .models import (
     ResearchBatchResponse,
     PriceRefreshResponse,
     BuildResearchResponse,
+    CashEventCommand,
+    CashEventResponse,
+    BenchmarkFulfillmentResponse,
 )
 from .queries import LatestResourceNotFound, MvpQueryService, MvpReadState
 
@@ -36,7 +42,14 @@ def _query_or_unavailable(query):
         raise HTTPException(status_code=503, detail=f"application state unavailable: {error}") from error
 
 
-def create_router(state: MvpReadState, *, refresh_service: RefreshPricesService, research_service: BuildResearchService) -> APIRouter:
+def create_router(
+    state: MvpReadState,
+    *,
+    refresh_service: RefreshPricesService,
+    research_service: BuildResearchService,
+    cash_event_service: CashEventService | None = None,
+    benchmark_fulfillment_service: BenchmarkFulfillmentService | None = None,
+) -> APIRouter:
     router = APIRouter()
 
     def service() -> MvpQueryService:
@@ -76,6 +89,29 @@ def create_router(state: MvpReadState, *, refresh_service: RefreshPricesService,
         except (IndexError, ValueError) as error:
             raise HTTPException(status_code=503, detail={"code": "research_unavailable", "message": str(error)}) from error
         return BuildResearchResponse(batch_id=result.batch.batch_id, decision_cycle_id=str(result.batch.decision_cycle_id), packet_count=len(result.batch.packets), source_provider_identity=result.provider_identity, as_of_timestamp=result.batch.as_of_timestamp.isoformat())
+
+    @router.post("/commands/cash-events", response_model=CashEventResponse)
+    def cash_event(command: CashEventCommand) -> CashEventResponse:
+        if cash_event_service is None:
+            raise HTTPException(status_code=503, detail={"code": "durable_state_required", "message": "cash events require configured local SQLite state"})
+        try:
+            result = cash_event_service.apply(amount=command.amount, currency=command.currency, source=command.source, effective_at=command.effective_at)
+        except (TypeError, ValueError) as error:
+            raise HTTPException(status_code=422, detail={"code": "cash_event_invalid", "message": str(error)}) from error
+        return CashEventResponse(event_id=str(result.event_id), managed_cash=format(result.funded_managed_portfolio.cash_balance.amount, "f"), benchmark_cash=format(result.funded_benchmark_portfolio.portfolio.cash_balance.amount, "f"), currency=result.cash_event.currency, effective_at=result.effective_at.isoformat())
+
+    @router.post("/commands/fulfill-benchmark", response_model=BenchmarkFulfillmentResponse)
+    def fulfill_benchmark(fulfilled_at: datetime) -> BenchmarkFulfillmentResponse:
+        if benchmark_fulfillment_service is None:
+            raise HTTPException(status_code=503, detail={"code": "durable_state_required", "message": "benchmark fulfillment requires configured local SQLite state"})
+        try:
+            result = benchmark_fulfillment_service.fulfill(fulfilled_at=fulfilled_at)
+        except (TypeError, ValueError) as error:
+            raise HTTPException(status_code=422, detail={"code": "benchmark_fulfillment_invalid", "message": str(error)}) from error
+        fulfillment = result.fulfillment
+        if fulfillment is None:
+            return BenchmarkFulfillmentResponse(status=result.status.value, fulfillment_id=None, quantity=None, notional=None, provider_identity=None, observed_at=None, market_date=None, price_convention=None)
+        return BenchmarkFulfillmentResponse(status=result.status.value, fulfillment_id=str(fulfillment.fulfillment_id), quantity=format(fulfillment.quantity, "f"), notional=format(fulfillment.notional, "f"), provider_identity=fulfillment.provider_identity, observed_at=fulfillment.price_observation.observed_at.isoformat(), market_date=fulfillment.price_observation.market_date.isoformat(), price_convention=fulfillment.price_observation.price_convention)
 
     @router.get("/portfolio", response_model=PortfolioSnapshotResponse)
     def portfolio() -> PortfolioSnapshotResponse:
