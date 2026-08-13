@@ -19,6 +19,8 @@ The integrated MVP includes:
 - capital-flow-adjusted managed-versus-SPY performance tracking; and
 - a Streamlit diagnostic/reference dashboard with a Decision Memo, Research
   Packet Viewer, and History & Timeline view.
+- a thin, read-only FastAPI adapter over deterministic synthetic in-memory MVP
+  state for frontend development.
 
 All financial state transitions are deterministic and traceable through the
 domain artifacts. The OpenAI adapter produces recommendations only; it never
@@ -30,7 +32,6 @@ executes trades.
 - automatic research retrieval or ResearchBatch assembly;
 - durable weekly-run persistence;
 - Variant C production frontend integration;
-- a FastAPI application layer; and
 - real brokerage execution.
 
 ## Local development
@@ -50,6 +51,17 @@ PYTHONPATH=src streamlit run streamlit_app.py
 The dashboard is a diagnostic/reference UI backed by deterministic demo data;
 it does not persist portfolio state or place trades. A manual OpenAI smoke test,
 when present in `scripts/`, requires `OPENAI_API_KEY`; it is not part of pytest.
+
+Run the read-only local API:
+
+```bash
+PYTHONPATH=src uvicorn agentic_portfolio_lab.api.app:app --reload
+```
+
+The API exposes the same synthetic, in-memory artifacts through explicit JSON
+schemas. Decimal financial values are JSON strings, and timestamps are
+timezone-aware ISO 8601 strings, so the frontend never receives lossy binary
+floating-point values.
 
 ## Guiding idea
 
