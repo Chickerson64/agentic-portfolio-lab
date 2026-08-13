@@ -18,9 +18,11 @@ The integrated MVP includes:
 - post-approval simulated BUY execution using caller-supplied price observations;
 - capital-flow-adjusted managed-versus-SPY performance tracking; and
 - a Streamlit diagnostic/reference dashboard with a Decision Memo, Research
-  Packet Viewer, and History & Timeline view.
+  Packet Viewer, and History & Timeline view;
 - a thin, read-only FastAPI adapter over deterministic synthetic in-memory MVP
-  state for frontend development.
+  state; and
+- a Variant C-inspired static frontend that consumes that API for the current
+  operator interface.
 
 All financial state transitions are deterministic and traceable through the
 domain artifacts. The OpenAI adapter produces recommendations only; it never
@@ -31,7 +33,6 @@ executes trades.
 - live market-data providers;
 - automatic research retrieval or ResearchBatch assembly;
 - durable weekly-run persistence;
-- Variant C production frontend integration;
 - real brokerage execution.
 
 ## Local development
@@ -62,6 +63,17 @@ The API exposes the same synthetic, in-memory artifacts through explicit JSON
 schemas. Decimal financial values are JSON strings, and timestamps are
 timezone-aware ISO 8601 strings, so the frontend never receives lossy binary
 floating-point values.
+
+Run the current read-only frontend against the local API in a second terminal:
+
+```bash
+cd frontend
+python -m http.server 8001
+```
+
+Then open <http://localhost:8001>. The frontend has no write controls and does
+not approve, execute, persist, or retrieve research; it presents the current
+API state only.
 
 ## Guiding idea
 

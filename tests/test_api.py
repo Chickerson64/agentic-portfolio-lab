@@ -224,3 +224,34 @@ def test_domain_import_does_not_depend_on_fastapi() -> None:
     )
 
     assert result.returncode == 0, result.stderr
+
+
+def test_local_frontend_cors_allowlist_is_narrow_and_get_only() -> None:
+    client = _client()
+
+    def preflight(origin: str, method: str) -> object:
+        return client.options(
+            "/dashboard",
+            headers={
+                "Origin": origin,
+                "Access-Control-Request-Method": method,
+            },
+        )
+
+    localhost = preflight("http://localhost:8001", "GET")
+    loopback = preflight("http://127.0.0.1:8001", "GET")
+    denied = client.options(
+        "/dashboard",
+        headers={
+            "Origin": "http://malicious.example",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    unsupported_method = preflight("http://localhost:8001", "POST")
+
+    assert localhost.status_code == loopback.status_code == 200
+    assert localhost.headers["access-control-allow-origin"] == "http://localhost:8001"
+    assert loopback.headers["access-control-allow-origin"] == "http://127.0.0.1:8001"
+    assert localhost.headers["access-control-allow-methods"] == "GET"
+    assert denied.status_code == 400
+    assert unsupported_method.status_code == 400
