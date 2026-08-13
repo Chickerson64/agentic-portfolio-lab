@@ -200,6 +200,43 @@ def test_openai_value_manager_returns_hold_recommendation() -> None:
     assert recommendation.investment_thesis is None
 
 
+def test_target_weight_schema_is_nullable_and_constrains_the_numeric_fraction() -> None:
+    target_weight = _recommendation_schema()["schema"]["properties"]["target_weight"]  # type: ignore[index]
+
+    assert target_weight == {
+        "type": ["number", "null"],
+        "exclusiveMinimum": 0,
+        "maximum": 1,
+    }
+
+
+def test_openai_value_manager_prompt_explains_target_weight_fraction_semantics() -> None:
+    manager, responses = _manager(_buy_payload())
+
+    manager.decide(_context())
+
+    prompt = json.dumps(responses.calls[0], sort_keys=True)
+    assert "target_weight is a decimal fraction, not a percentage" in prompt
+    assert "25% = 0.25, not 25" in prompt
+
+
+def test_openai_value_manager_accepts_decimal_fraction_target_weight() -> None:
+    manager, _ = _manager(_buy_payload())
+
+    recommendation = manager.decide(_context())
+
+    assert recommendation.target_weight == Decimal("0.25")
+
+
+def test_openai_value_manager_rejects_percentage_like_target_weight_without_coercion() -> None:
+    payload = _buy_payload()
+    payload["target_weight"] = 25
+    manager, _ = _manager(payload)
+
+    with pytest.raises(ValueError, match="could not be converted"):
+        manager.decide(_context())
+
+
 def test_openai_value_manager_includes_constitution_portfolio_batch_and_feedback() -> None:
     context = _context(feedback=("Please tie the thesis to cash flow.",))
     manager, responses = _manager(_buy_payload())
