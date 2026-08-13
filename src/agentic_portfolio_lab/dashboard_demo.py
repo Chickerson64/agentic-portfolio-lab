@@ -15,7 +15,7 @@ from .domain.journal import DecisionJournalEntry
 from .domain.performance import BenchmarkPerformanceHistory, PerformanceComparison, PortfolioPerformanceHistory
 from .domain.portfolio import CashBalance, Portfolio, Position, SecurityIdentity
 from .domain.recommendations import PortfolioRecommendation, RecommendationAction, RecommendationEvidenceReference, ReviewTrigger, ReviewTriggerType
-from .domain.research import EvidenceItem, ResearchBatch, ResearchPacket, ResearchSection
+from .domain.research import EvidenceItem, MissingData, MissingDataReason, ResearchBatch, ResearchPacket, ResearchSection
 from .domain.risk_validation import RiskRuleResult, RiskValidationResult, RiskValidationStatus
 from .domain.reviewer import AIReviewerReviewContext, ReviewDecision, ReviewFinding, ReviewFindingCategory, ReviewFindingSeverity, ReviewerResult
 from .domain.value_manager_workflow import ValueManagerDecisionResult
@@ -115,14 +115,23 @@ def _demo_cash_event() -> CashEvent:
 
 
 def _demo_research_batch(portfolio: Portfolio) -> ResearchBatch:
-    evidence = EvidenceItem(
-        evidence_id="demo_ev_001",
-        source_type="FILING",
-        source_title="Quarterly Report",
-        source_date=DEMO_CREATED_AT.date(),
-        claim_supported="The portfolio retains cash and a concentrated equity mix.",
+    aapl_evidence = (
+        EvidenceItem(
+            evidence_id="demo_ev_001",
+            source_type="FILING",
+            source_title="Apple Quarterly Report",
+            source_date=DEMO_CREATED_AT.date(),
+            claim_supported="Apple reported continuing operating cash generation.",
+        ),
+        EvidenceItem(
+            evidence_id="demo_ev_002",
+            source_type="EARNINGS_RELEASE",
+            source_title="Apple Earnings Release",
+            source_date=DEMO_CREATED_AT.date(),
+            claim_supported="Services revenue remains an important business contributor.",
+        ),
     )
-    packet = ResearchPacket(
+    aapl_packet = ResearchPacket(
         packet_id="demo_packet_001",
         candidate_id="demo_candidate_001",
         ticker="AAPL",
@@ -133,12 +142,90 @@ def _demo_research_batch(portfolio: Portfolio) -> ResearchBatch:
         sector="Technology",
         industry="Consumer Electronics",
         as_of_timestamp=DEMO_CREATED_AT,
-        evidence_items=(evidence,),
+        evidence_items=aapl_evidence,
         sections=(
             ResearchSection(
                 section_id="BUSINESS_OVERVIEW",
-                content="Demo-only business overview.",
-                evidence_ids=(evidence.evidence_id,),
+                content="Synthetic overview of a global consumer technology business.",
+                evidence_ids=("demo_ev_001",),
+            ),
+            ResearchSection(
+                section_id="FINANCIAL_CONTEXT",
+                content="Synthetic cash-generation and services-revenue context.",
+                evidence_ids=("demo_ev_001", "demo_ev_002"),
+            ),
+        ),
+    )
+    msft_evidence = (
+        EvidenceItem(
+            evidence_id="demo_ev_003",
+            source_type="FILING",
+            source_title="Microsoft Quarterly Report",
+            source_date=DEMO_CREATED_AT.date(),
+            claim_supported="Microsoft reported enterprise software and cloud operating context.",
+        ),
+        EvidenceItem(
+            evidence_id="demo_ev_004",
+            source_type="PRESENTATION",
+            source_title="Microsoft Investor Presentation",
+            source_date=DEMO_CREATED_AT.date(),
+            claim_supported="Capital investment remains a relevant operating consideration.",
+        ),
+    )
+    msft_packet = ResearchPacket(
+        packet_id="demo_packet_002",
+        candidate_id="demo_candidate_002",
+        ticker="MSFT",
+        security_type="EQUITY",
+        exchange="NASDAQ",
+        currency="USD",
+        company_name="Demo Microsoft",
+        sector="Technology",
+        industry="Software",
+        as_of_timestamp=DEMO_CREATED_AT,
+        evidence_items=msft_evidence,
+        sections=(
+            ResearchSection(
+                section_id="BUSINESS_OVERVIEW",
+                content="Synthetic overview of an enterprise software and cloud business.",
+                evidence_ids=("demo_ev_003",),
+            ),
+            ResearchSection(
+                section_id="RISKS",
+                content="Synthetic note that capital investment and competitive pressure remain relevant.",
+                evidence_ids=("demo_ev_004",),
+            ),
+        ),
+    )
+    googl_packet = ResearchPacket(
+        packet_id="demo_packet_003",
+        candidate_id="demo_candidate_003",
+        ticker="GOOGL",
+        security_type="EQUITY",
+        exchange=MissingData(MissingDataReason.NOT_AVAILABLE, "Synthetic exchange metadata is absent."),
+        currency=MissingData(MissingDataReason.NOT_AVAILABLE, "Synthetic currency metadata is absent."),
+        company_name="Demo Alphabet",
+        sector="Communication Services",
+        industry="Internet Content & Information",
+        as_of_timestamp=DEMO_CREATED_AT,
+        evidence_items=(
+            EvidenceItem(
+                evidence_id="demo_ev_005",
+                source_type="FILING",
+                source_title="Alphabet Quarterly Report",
+                source_date=DEMO_CREATED_AT.date(),
+                claim_supported="Alphabet reported advertising and cloud business context.",
+            ),
+        ),
+        sections=(
+            ResearchSection(
+                section_id="BUSINESS_OVERVIEW",
+                content="Synthetic overview of advertising and cloud businesses.",
+                evidence_ids=("demo_ev_005",),
+            ),
+            ResearchSection(
+                section_id="VALUATION_CONTEXT",
+                content=MissingData(MissingDataReason.NOT_AVAILABLE, "No synthetic valuation data was supplied."),
             ),
         ),
     )
@@ -149,7 +236,7 @@ def _demo_research_batch(portfolio: Portfolio) -> ResearchBatch:
         manager_type="VALUE",
         created_at=DEMO_CREATED_AT,
         as_of_timestamp=DEMO_CREATED_AT,
-        packets=(packet,),
+        packets=(aapl_packet, msft_packet, googl_packet),
     )
 
 
@@ -233,9 +320,9 @@ def build_demo_dashboard_data() -> DashboardDemoData:
             RecommendationEvidenceReference(
                 evidence_id="demo_ev_001",
                 source_type="FILING",
-                source_title="Quarterly Report",
+                source_title="Apple Quarterly Report",
                 source_date=DEMO_CREATED_AT.date(),
-                claim_supported="The portfolio retains cash and a concentrated equity mix.",
+                claim_supported="Apple reported continuing operating cash generation.",
             ),
         ),
         why_not_spy="The dashboard demo is intentionally showing a HOLD summary.",

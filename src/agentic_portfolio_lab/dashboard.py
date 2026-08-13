@@ -12,12 +12,13 @@ from .domain.journal import DecisionJournalEntry
 from .domain.performance import BenchmarkPerformanceHistory, PerformanceComparison, PortfolioPerformanceHistory
 from .domain.portfolio import Portfolio, Position, SecurityIdentity
 from .domain.recommendations import PortfolioRecommendation
+from .domain.research import MissingData, ResearchBatch, ResearchPacket, ResearchSection
 from .domain.risk_validation import RiskRuleResult
 from .domain.reviewer import ReviewFinding
 from .domain.valuation import PortfolioValuation, PositionValuation
 
 _PRESENTATION_DECIMAL_CONTEXT = Context(prec=MAX_PREC, Emax=MAX_EMAX, Emin=MIN_EMIN)
-DASHBOARD_TAB_LABELS = ("Overview", "Holdings", "Performance", "Decision Memo")
+DASHBOARD_TAB_LABELS = ("Overview", "Holdings", "Performance", "Decision Memo", "Research")
 
 
 def format_decimal(value: Decimal, *, places: int | None = None) -> str:
@@ -161,11 +162,64 @@ class LatestDecisionPanel:
 
 
 @dataclass(frozen=True, slots=True)
+class MissingDataPanel:
+    field_name: str
+    reason: str
+    details: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ResearchSectionPanel:
+    section_id: str
+    content: str | None
+    evidence_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ResearchEvidencePanel:
+    evidence_id: str
+    source_type: str
+    source_title: str
+    source_date: str
+    claim_supported: str
+    cited_by_decision: bool
+    referenced_by_reviewer: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ResearchPacketPanel:
+    packet_id: str
+    candidate_id: str
+    selector_label: str
+    ticker: str
+    company_name: str | None
+    security_type: str
+    exchange: str | None
+    currency: str | None
+    as_of_timestamp: str
+    sections: tuple[ResearchSectionPanel, ...]
+    evidence: tuple[ResearchEvidencePanel, ...]
+    missing_data: tuple[MissingDataPanel, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ResearchBatchPanel:
+    batch_id: str
+    decision_cycle_id: str
+    manager_type: str
+    created_at: str
+    as_of_timestamp: str
+    candidate_count: int
+    packets: tuple[ResearchPacketPanel, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class DashboardView:
     managed: PortfolioPanel
     benchmark: BenchmarkPanel
     comparison: ComparisonPanel
     latest_decision: LatestDecisionPanel | None = None
+    research: ResearchBatchPanel | None = None
 
 
 def _format_position_row(
@@ -282,6 +336,100 @@ def _format_evidence(reference) -> EvidencePanel:
     )
 
 
+def _missing_data_panel(field_name: str, value: MissingData) -> MissingDataPanel:
+    return MissingDataPanel(field_name=field_name, reason=value.reason.value, details=value.details)
+
+
+def _research_value(value: str | MissingData, *, field_name: str) -> tuple[str | None, MissingDataPanel | None]:
+    if isinstance(value, MissingData):
+        return None, _missing_data_panel(field_name, value)
+    return value, None
+
+
+def _research_section_panel(section: ResearchSection) -> tuple[ResearchSectionPanel, MissingDataPanel | None]:
+    if isinstance(section.content, MissingData):
+        return (
+            ResearchSectionPanel(section_id=section.section_id, content=None, evidence_ids=section.evidence_ids),
+            _missing_data_panel(f"Section: {section.section_id}", section.content),
+        )
+    return ResearchSectionPanel(section_id=section.section_id, content=section.content, evidence_ids=section.evidence_ids), None
+
+
+def _research_packet_panel(
+    packet: ResearchPacket,
+    *,
+    cited_evidence_ids: frozenset[str],
+    reviewer_evidence_ids: frozenset[str],
+) -> ResearchPacketPanel:
+    missing_data: list[MissingDataPanel] = []
+    company_name, company_missing = _research_value(packet.company_name, field_name="Company name")
+    exchange, exchange_missing = _research_value(packet.exchange, field_name="Exchange")
+    currency, currency_missing = _research_value(packet.currency, field_name="Currency")
+    _, sector_missing = _research_value(packet.sector, field_name="Sector")
+    _, industry_missing = _research_value(packet.industry, field_name="Industry")
+    for missing in (company_missing, exchange_missing, currency_missing, sector_missing, industry_missing):
+        if missing is not None:
+            missing_data.append(missing)
+    sections: list[ResearchSectionPanel] = []
+    for section in packet.sections:
+        section_panel, section_missing = _research_section_panel(section)
+        sections.append(section_panel)
+        if section_missing is not None:
+            missing_data.append(section_missing)
+    evidence = tuple(
+        ResearchEvidencePanel(
+            evidence_id=item.evidence_id,
+            source_type=item.source_type,
+            source_title=item.source_title,
+            source_date=item.source_date.isoformat(),
+            claim_supported=item.claim_supported,
+            cited_by_decision=item.evidence_id in cited_evidence_ids,
+            referenced_by_reviewer=item.evidence_id in reviewer_evidence_ids,
+        )
+        for item in packet.evidence_items
+    )
+    selector_label = f"{packet.ticker} — {company_name or 'Company not provided'}"
+    return ResearchPacketPanel(
+        packet_id=packet.packet_id,
+        candidate_id=packet.candidate_id,
+        selector_label=selector_label,
+        ticker=packet.ticker,
+        company_name=company_name,
+        security_type=packet.security_type,
+        exchange=exchange,
+        currency=currency,
+        as_of_timestamp=_format_datetime(packet.as_of_timestamp),
+        sections=tuple(sections),
+        evidence=evidence,
+        missing_data=tuple(missing_data),
+    )
+
+
+def _research_batch_panel(
+    research_batch: ResearchBatch,
+    *,
+    journal_entry: DecisionJournalEntry | None,
+) -> ResearchBatchPanel:
+    cited_evidence_ids = frozenset() if journal_entry is None else frozenset(journal_entry.cited_evidence_ids)
+    reviewer_evidence_ids = frozenset() if journal_entry is None else frozenset(journal_entry.reviewer_evidence_ids)
+    return ResearchBatchPanel(
+        batch_id=research_batch.batch_id,
+        decision_cycle_id=str(research_batch.decision_cycle_id),
+        manager_type=research_batch.manager_type,
+        created_at=_format_datetime(research_batch.created_at),
+        as_of_timestamp=_format_datetime(research_batch.as_of_timestamp),
+        candidate_count=len(research_batch.packets),
+        packets=tuple(
+            _research_packet_panel(
+                packet,
+                cited_evidence_ids=cited_evidence_ids,
+                reviewer_evidence_ids=reviewer_evidence_ids,
+            )
+            for packet in research_batch.packets
+        ),
+    )
+
+
 def _decision_panel(
     *,
     journal_entry: DecisionJournalEntry | None = None,
@@ -348,6 +496,7 @@ def build_dashboard_view(
     comparison: PerformanceComparison | None = None,
     journal_entry: DecisionJournalEntry | None = None,
     approval: DecisionApproval | None = None,
+    research_batch: ResearchBatch | None = None,
 ) -> DashboardView:
     """Transform immutable domain objects into a compact dashboard view model."""
     if not managed_history.snapshots:
@@ -365,11 +514,21 @@ def build_dashboard_view(
     benchmark_panel = _benchmark_panel(benchmark_snapshot.portfolio, benchmark_snapshot.valuation)
     comparison_panel = _comparison_panel(derived_comparison)
     decision_panel = _decision_panel(journal_entry=journal_entry, approval=approval)
+    journal_source = approval.journal_entry if approval is not None else journal_entry
+    if journal_source is not None:
+        authoritative_research_batch = journal_source.decision_result.context.research_batch
+        if research_batch is not None and research_batch is not authoritative_research_batch:
+            raise ValueError("research_batch must be the journal entry's authoritative ResearchBatch")
+    else:
+        authoritative_research_batch = research_batch
     return DashboardView(
         managed=managed_panel,
         benchmark=benchmark_panel,
         comparison=comparison_panel,
         latest_decision=decision_panel,
+        research=None
+        if authoritative_research_batch is None
+        else _research_batch_panel(authoritative_research_batch, journal_entry=journal_source),
     )
 
 
@@ -438,7 +597,7 @@ def render_streamlit_dashboard(view: DashboardView) -> None:
     summary_cols[2].metric("Absolute Alpha", view.comparison.absolute_alpha, delta=alpha_delta, delta_color=alpha_color)
     summary_cols[3].metric("Cash", view.managed.cash_value)
 
-    overview_tab, holdings_tab, performance_tab, decision_tab = st.tabs(DASHBOARD_TAB_LABELS)
+    overview_tab, holdings_tab, performance_tab, decision_tab, research_tab = st.tabs(DASHBOARD_TAB_LABELS)
 
     with overview_tab:
         st.subheader("Portfolio Overview")
@@ -568,3 +727,74 @@ def render_streamlit_dashboard(view: DashboardView) -> None:
                 st.write(f"Timestamp: {view.latest_decision.approval.decided_at}")
                 if view.latest_decision.approval.comment is not None:
                     st.write(f"Comment: {view.latest_decision.approval.comment}")
+
+    with research_tab:
+        st.subheader("Research")
+        if view.research is None:
+            st.write("No research batch is available.")
+        else:
+            research = view.research
+            st.caption("Synthetic, in-memory, read-only research inputs.")
+            st.markdown("#### Batch Summary")
+            batch_cols = st.columns(4)
+            batch_cols[0].metric("Manager Type", research.manager_type)
+            batch_cols[1].metric("As of", research.as_of_timestamp)
+            batch_cols[2].metric("Created", research.created_at)
+            batch_cols[3].metric("Candidates", str(research.candidate_count))
+            st.caption(f"Decision cycle: {research.decision_cycle_id} · Batch ID: {research.batch_id}")
+
+            st.divider()
+            st.markdown("#### Candidate Selector")
+            packets_by_candidate_id = {packet.candidate_id: packet for packet in research.packets}
+            selected_candidate_id = st.selectbox(
+                "Candidate",
+                options=tuple(packets_by_candidate_id),
+                format_func=lambda candidate_id: packets_by_candidate_id[candidate_id].selector_label,
+                key="research_candidate_id",
+            )
+            packet = packets_by_candidate_id[selected_candidate_id]
+
+            st.divider()
+            st.markdown("#### Security")
+            security_cols = st.columns(4)
+            security_cols[0].metric("Ticker", packet.ticker)
+            security_cols[1].metric("Security Type", packet.security_type)
+            security_cols[2].metric("Exchange", packet.exchange or "Not provided")
+            security_cols[3].metric("Currency", packet.currency or "Not provided")
+            st.caption(
+                f"Packet ID: {packet.packet_id} · Candidate ID: {packet.candidate_id} · "
+                f"Packet as of: {packet.as_of_timestamp}"
+            )
+
+            st.divider()
+            st.markdown("#### Research Sections")
+            for section in packet.sections:
+                with st.expander(section.section_id.replace("_", " ").title(), expanded=False):
+                    st.write(section.content or "Not provided")
+                    if section.evidence_ids:
+                        st.caption(f"Evidence IDs: {', '.join(section.evidence_ids)}")
+
+            st.divider()
+            st.markdown("#### Evidence")
+            for evidence in packet.evidence:
+                badges = []
+                if evidence.cited_by_decision:
+                    badges.append("Cited by decision")
+                if evidence.referenced_by_reviewer:
+                    badges.append("Referenced by reviewer")
+                badge_text = " · ".join(badges)
+                with st.expander(f"{evidence.evidence_id}: {evidence.source_title}", expanded=False):
+                    if badge_text:
+                        st.caption(badge_text)
+                    st.write(f"Source type: {evidence.source_type}")
+                    st.write(f"Source date: {evidence.source_date}")
+                    st.write(f"Claim supported: {evidence.claim_supported}")
+
+            st.divider()
+            st.markdown("#### Missing Data")
+            if not packet.missing_data:
+                st.write("No missing data was supplied for this packet.")
+            else:
+                for missing in packet.missing_data:
+                    details = f" — {missing.details}" if missing.details is not None else ""
+                    st.warning(f"{missing.field_name}: {missing.reason}{details}")

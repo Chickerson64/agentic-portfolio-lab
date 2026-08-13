@@ -69,7 +69,7 @@ def test_demo_dashboard_view_has_managed_benchmark_and_comparison_sections() -> 
 
 
 def test_dashboard_uses_streamlit_tabs_for_main_read_only_sections() -> None:
-    assert DASHBOARD_TAB_LABELS == ("Overview", "Holdings", "Performance", "Decision Memo")
+    assert DASHBOARD_TAB_LABELS == ("Overview", "Holdings", "Performance", "Decision Memo", "Research")
 
 
 def test_demo_dashboard_includes_latest_decision_summary() -> None:
@@ -81,6 +81,73 @@ def test_demo_dashboard_includes_latest_decision_summary() -> None:
     assert view.latest_decision.summary.target_weight == "n/a"
     assert view.latest_decision.approval.decision == "APPROVED"
     assert view.latest_decision.reviewer.decision == "APPROVE"
+
+
+def test_research_tab_exposes_deterministic_candidate_packets_and_metadata() -> None:
+    view = build_demo_dashboard_view()
+
+    assert view.research is not None
+    assert view.research.manager_type == "VALUE"
+    assert view.research.candidate_count == 3
+    assert tuple(packet.candidate_id for packet in view.research.packets) == (
+        "demo_candidate_001",
+        "demo_candidate_002",
+        "demo_candidate_003",
+    )
+    aapl = view.research.packets[0]
+    assert aapl.selector_label == "AAPL — Demo Apple"
+    assert aapl.security_type == "EQUITY"
+    assert aapl.exchange == "NASDAQ"
+    assert len(aapl.sections) == 2
+
+
+def test_research_evidence_linkage_and_missing_data_are_display_only() -> None:
+    view = build_demo_dashboard_view()
+
+    assert view.research is not None
+    aapl_evidence = {evidence.evidence_id: evidence for evidence in view.research.packets[0].evidence}
+    assert aapl_evidence["demo_ev_001"].cited_by_decision is True
+    assert aapl_evidence["demo_ev_001"].referenced_by_reviewer is True
+    assert aapl_evidence["demo_ev_002"].cited_by_decision is False
+    googl = view.research.packets[2]
+    assert googl.exchange is None
+    assert googl.currency is None
+    assert {missing.field_name for missing in googl.missing_data} == {
+        "Exchange",
+        "Currency",
+        "Section: VALUATION_CONTEXT",
+    }
+
+
+def test_research_without_journal_has_no_decision_or_reviewer_evidence_badges() -> None:
+    data = build_demo_dashboard_data()
+    research_batch = data.journal_entry.decision_result.context.research_batch
+
+    view = build_dashboard_view(
+        managed_history=data.managed_history,
+        benchmark_history=data.benchmark_history,
+        research_batch=research_batch,
+    )
+
+    assert view.research is not None
+    assert not any(
+        evidence.cited_by_decision or evidence.referenced_by_reviewer
+        for packet in view.research.packets
+        for evidence in packet.evidence
+    )
+
+
+def test_journal_research_batch_is_authoritative_when_a_journal_exists() -> None:
+    data = build_demo_dashboard_data()
+    research_batch = data.journal_entry.decision_result.context.research_batch
+
+    with pytest.raises(ValueError, match="authoritative ResearchBatch"):
+        build_dashboard_view(
+            managed_history=data.managed_history,
+            benchmark_history=data.benchmark_history,
+            journal_entry=data.journal_entry,
+            research_batch=replace(research_batch, batch_id="different_batch"),
+        )
 
 
 def test_latest_decision_view_uses_the_journal_decision_cycle_for_every_artifact() -> None:
@@ -201,6 +268,7 @@ def test_demo_dashboard_data_is_immutable_from_the_view_layer() -> None:
     data = build_demo_dashboard_data()
     managed_before = data.managed_history.snapshots
     benchmark_before = data.benchmark_history.snapshots
+    research_before = data.journal_entry.decision_result.context.research_batch
 
     build_dashboard_view(
         managed_history=data.managed_history,
@@ -212,6 +280,7 @@ def test_demo_dashboard_data_is_immutable_from_the_view_layer() -> None:
 
     assert data.managed_history.snapshots == managed_before
     assert data.benchmark_history.snapshots == benchmark_before
+    assert data.journal_entry.decision_result.context.research_batch == research_before
     assert data.managed_history.snapshots[-1].valuation.total_value == Decimal("1120")
 
 
