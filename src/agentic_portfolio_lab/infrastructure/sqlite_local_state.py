@@ -318,6 +318,24 @@ class SQLitePriceRefreshState:
             )
 
 
+class SQLiteResearchBatchState:
+    """Append a completed immutable ResearchBatch through the existing transition."""
+
+    def __init__(self, store: SQLiteLocalRunStore) -> None:
+        self._store = store
+
+    def append_research_batch(self, batch) -> None:
+        from agentic_portfolio_lab.domain.research import ResearchBatch
+        if not isinstance(batch, ResearchBatch):
+            raise TypeError("batch must be a ResearchBatch")
+        current = self._store.open_run()
+        if current is None:
+            raise ValueError("local SQLite run has not been initialized")
+        if any(existing.batch_id == batch.batch_id for existing in current.research_batches):
+            raise ValueError("research batch must not rewrite a persisted batch")
+        self._store.save_transition(replace(current, research_batches=(*current.research_batches, batch)))
+
+
 class SQLiteMvpReadState:
     """Read adapter: SQLite details stay outside the FastAPI query/domain layers."""
 
@@ -343,6 +361,7 @@ class SQLiteMvpReadState:
             latest_approval=state.latest_approval,
             history_entries=state.history_entries,
             source_metadata=self.source_metadata,
+            research_batches=state.research_batches,
         )
 
     @property
@@ -377,3 +396,7 @@ class SQLiteMvpReadState:
     @property
     def history_entries(self) -> tuple[DecisionHistoryArtifacts, ...]:
         return self._state().history_entries
+
+    @property
+    def research_batches(self):
+        return self._state().research_batches

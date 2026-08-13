@@ -350,6 +350,10 @@ export function normalizePriceRefresh(payload) {
     priceConvention: text(field(payload, "price_convention", context), `${context}.price_convention`),
   };
 }
+export function normalizeBuildResearch(payload) {
+  const context = "research build";
+  return { batchId: text(field(payload, "batch_id", context), `${context}.batch_id`), decisionCycleId: text(field(payload, "decision_cycle_id", context), `${context}.decision_cycle_id`), packetCount: number(field(payload, "packet_count", context), `${context}.packet_count`), provider: text(field(payload, "source_provider_identity", context), `${context}.source_provider_identity`), asOfTimestamp: text(field(payload, "as_of_timestamp", context), `${context}.as_of_timestamp`) };
+}
 
 export async function loadApplication() {
   const [health, dashboard, decision, research, history] = await Promise.all([
@@ -436,4 +440,13 @@ export async function refreshPrices({ button = document.querySelector("#refresh-
     button.disabled = false; button.textContent = "Refresh prices";
   }
 }
-if (app) { document.querySelector("#refresh-prices").addEventListener("click", refreshPrices); start(); }
+export async function buildResearch({ button = document.querySelector("#build-research"), status = document.querySelector("#health-status"), reload = start } = {}) {
+  button.disabled = true; button.textContent = "Building research…"; status.textContent = "Building source-attributed Alpha Vantage research…";
+  try {
+    const result = normalizeBuildResearch(await apiClient.post("/commands/build-research"));
+    refreshStatus = `Research built: ${result.packetCount} packets from ${result.provider} · ${dateTime(result.asOfTimestamp)}`;
+    status.textContent = refreshStatus; await reload();
+  } catch (error) { refreshStatus = `Research build failed: ${error.message}`; status.textContent = refreshStatus; }
+  finally { button.disabled = false; button.textContent = "Build research"; }
+}
+if (app) { document.querySelector("#refresh-prices").addEventListener("click", refreshPrices); document.querySelector("#build-research").addEventListener("click", buildResearch); start(); }

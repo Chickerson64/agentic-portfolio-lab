@@ -177,6 +177,7 @@ class DecisionMemoResponse(ApiModel):
 class MissingDataResponse(ApiModel):
     value: None = None
     reason: str
+    details: str | None
 
 
 class ResearchSectionResponse(ApiModel):
@@ -270,6 +271,14 @@ class PriceRefreshResponse(ApiModel):
     provider_identity: str
     latest_source_timestamp: str
     price_convention: str
+
+
+class BuildResearchResponse(ApiModel):
+    batch_id: str
+    decision_cycle_id: str
+    packet_count: int
+    source_provider_identity: str
+    as_of_timestamp: str
 
 
 class DashboardResponse(ApiModel):
@@ -466,7 +475,7 @@ def decision_memo_response(
 
 def _text_or_missing(value: str | MissingData) -> tuple[str | None, MissingDataResponse | None]:
     if isinstance(value, MissingData):
-        return None, MissingDataResponse(reason=value.reason.value)
+        return None, MissingDataResponse(reason=value.reason.value, details=value.details)
     return value, None
 
 

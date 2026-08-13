@@ -5,7 +5,9 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from agentic_portfolio_lab.application.refresh_prices import RefreshPricesService
+from agentic_portfolio_lab.application.build_research import BuildResearchService
 from agentic_portfolio_lab.domain.market_prices import MarketPriceConfigurationError, MarketPriceError
+from agentic_portfolio_lab.domain.research_provider import ResearchProviderConfigurationError, ResearchProviderError
 
 from .models import (
     BenchmarkSnapshotResponse,
@@ -17,6 +19,7 @@ from .models import (
     PortfolioSnapshotResponse,
     ResearchBatchResponse,
     PriceRefreshResponse,
+    BuildResearchResponse,
 )
 from .queries import LatestResourceNotFound, MvpQueryService, MvpReadState
 
@@ -33,7 +36,7 @@ def _query_or_unavailable(query):
         raise HTTPException(status_code=503, detail=f"application state unavailable: {error}") from error
 
 
-def create_router(state: MvpReadState, *, refresh_service: RefreshPricesService) -> APIRouter:
+def create_router(state: MvpReadState, *, refresh_service: RefreshPricesService, research_service: BuildResearchService) -> APIRouter:
     router = APIRouter()
 
     def service() -> MvpQueryService:
@@ -61,6 +64,18 @@ def create_router(state: MvpReadState, *, refresh_service: RefreshPricesService)
             latest_source_timestamp=result.latest_source_timestamp.isoformat(),
             price_convention=result.observations[0].price_convention,
         )
+
+    @router.post("/commands/build-research", response_model=BuildResearchResponse)
+    def build_research() -> BuildResearchResponse:
+        try:
+            result = research_service.build(portfolio_id=service().managed_portfolio_id())
+        except ResearchProviderConfigurationError as error:
+            raise HTTPException(status_code=503, detail={"code": "research_provider_configuration", "message": str(error)}) from error
+        except ResearchProviderError as error:
+            raise HTTPException(status_code=502, detail={"code": "research_provider_unavailable", "message": str(error)}) from error
+        except (IndexError, ValueError) as error:
+            raise HTTPException(status_code=503, detail={"code": "research_unavailable", "message": str(error)}) from error
+        return BuildResearchResponse(batch_id=result.batch.batch_id, decision_cycle_id=str(result.batch.decision_cycle_id), packet_count=len(result.batch.packets), source_provider_identity=result.provider_identity, as_of_timestamp=result.batch.as_of_timestamp.isoformat())
 
     @router.get("/portfolio", response_model=PortfolioSnapshotResponse)
     def portfolio() -> PortfolioSnapshotResponse:

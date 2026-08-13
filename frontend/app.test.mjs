@@ -11,7 +11,9 @@ const {
   normalizeResearch,
   normalizeHistory,
   normalizePriceRefresh,
+  normalizeBuildResearch,
   refreshPrices,
+  buildResearch,
 } = await import("./app.js");
 
 const security = (ticker = "MSFT") => ({ ticker, security_type: "EQUITY", exchange: "NASDAQ", currency: "USD" });
@@ -102,6 +104,10 @@ assert.deepEqual(
   normalizePriceRefresh({ refreshed_tickers: ["MSFT", "SPY"], provider_identity: "twelve-data", latest_source_timestamp: "2026-08-13T20:00:00+00:00", price_convention: "twelve-data-quote-close-field" }),
   { refreshedTickers: ["MSFT", "SPY"], providerIdentity: "twelve-data", latestSourceTimestamp: "2026-08-13T20:00:00+00:00", priceConvention: "twelve-data-quote-close-field" },
 );
+assert.deepEqual(
+  normalizeBuildResearch({ batch_id: "batch-1", decision_cycle_id: "cycle-1", packet_count: 5, source_provider_identity: "alpha-vantage", as_of_timestamp: "2026-08-13T20:00:00+00:00" }),
+  { batchId: "batch-1", decisionCycleId: "cycle-1", packetCount: 5, provider: "alpha-vantage", asOfTimestamp: "2026-08-13T20:00:00+00:00" },
+);
 
 const deferred = () => {
   let resolve;
@@ -141,6 +147,18 @@ assert.equal(failingButton.disabled, false);
 assert.equal(failingButton.textContent, "Refresh prices");
 assert.equal(failingStatus.textContent, "Price refresh failed: provider unavailable");
 assert.doesNotMatch(failingStatus.textContent, /Prices refreshed/);
+
+const buildButton = { disabled: false, textContent: "Build research" }, buildStatus = { textContent: "" }, pendingBuild = deferred();
+let buildReloads = 0;
+globalThis.fetch = async (url, options) => { assert.equal(new URL(url).pathname, "/commands/build-research"); assert.equal(options.method, "POST"); return pendingBuild.promise; };
+const building = buildResearch({ button: buildButton, status: buildStatus, reload: async () => { buildReloads += 1; } });
+assert.equal(buildButton.disabled, true); assert.equal(buildButton.textContent, "Building research…"); assert.match(buildStatus.textContent, /Building source-attributed/);
+pendingBuild.resolve({ ok: true, json: async () => ({ batch_id:"batch", decision_cycle_id:"cycle", packet_count:5, source_provider_identity:"fake-source", as_of_timestamp:"2026-08-13T20:00:00+00:00" }) });
+await building;
+assert.equal(buildReloads, 1); assert.equal(buildButton.disabled, false); assert.match(buildStatus.textContent, /Research built: 5 packets from fake-source/);
+globalThis.fetch = async () => ({ ok:false, status:502, json:async()=>({detail:{message:"source failed"}}) });
+await buildResearch({ button: buildButton, status: buildStatus, reload: async () => { throw new Error("must not reload"); } });
+assert.equal(buildButton.disabled, false); assert.equal(buildStatus.textContent, "Research build failed: source failed");
 
 const originalFetch = globalThis.fetch;
 globalThis.fetch = async (url) => {

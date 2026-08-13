@@ -50,6 +50,7 @@ class MvpReadStateSnapshot:
     latest_approval: DecisionApproval | None
     history_entries: tuple[DecisionHistoryArtifacts, ...]
     source_metadata: StateSourceMetadata
+    research_batches: tuple = ()
 
     @classmethod
     def from_dashboard_demo(cls, data: DashboardDemoData) -> "MvpReadStateSnapshot":
@@ -65,6 +66,7 @@ class MvpReadStateSnapshot:
                 persisted=False,
                 synthetic=True,
             ),
+            research_batches=(),
         )
 
 
@@ -125,6 +127,9 @@ class MvpQueryService:
         """Expose current managed holdings to command orchestration only."""
         return tuple(position.security for position in self._state.managed_history.snapshots[-1].portfolio.positions)
 
+    def managed_portfolio_id(self):
+        return self._state.managed_history.snapshots[-1].portfolio.portfolio_id
+
     def portfolio(self) -> PortfolioSnapshotResponse:
         return portfolio_snapshot_response(self._state.managed_history.snapshots[-1])
 
@@ -163,6 +168,9 @@ class MvpQueryService:
         )
 
     def research_latest(self) -> ResearchBatchResponse:
+        persisted_batches = getattr(self._state, "research_batches", ())
+        if persisted_batches:
+            return research_batch_response(persisted_batches[-1])
         journal, _ = self._latest_journal_and_approval()
         return research_batch_response(journal.decision_result.context.research_batch)
 

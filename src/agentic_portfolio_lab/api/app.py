@@ -8,9 +8,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from agentic_portfolio_lab.dashboard_demo import build_demo_dashboard_data
-from agentic_portfolio_lab.application.market_configuration import CANDIDATE_UNIVERSE, SPY_BENCHMARK
+from agentic_portfolio_lab.application.market_configuration import CANDIDATE_UNIVERSE, RESEARCH_CANDIDATE_UNIVERSE, SPY_BENCHMARK
 from agentic_portfolio_lab.application.refresh_prices import InMemoryPriceRefreshState, RefreshPricesService
-from agentic_portfolio_lab.infrastructure.sqlite_local_state import SQLiteLocalRunStore, SQLiteMvpReadState, SQLitePriceRefreshState
+from agentic_portfolio_lab.application.build_research import BuildResearchService
+from agentic_portfolio_lab.infrastructure.sqlite_local_state import SQLiteLocalRunStore, SQLiteMvpReadState, SQLitePriceRefreshState, SQLiteResearchBatchState
+from agentic_portfolio_lab.infrastructure.alpha_vantage import AlphaVantageResearchProvider
 from agentic_portfolio_lab.infrastructure.twelve_data import TwelveDataMarketPriceProvider
 
 from .queries import MvpReadState, MvpReadStateSnapshot
@@ -22,6 +24,7 @@ def create_app(
     state: MvpReadState | None = None,
     database_path: str | None = None,
     refresh_service: RefreshPricesService | None = None,
+    research_service: BuildResearchService | None = None,
 ) -> FastAPI:
     """Create the HTTP adapter with explicit, replaceable application state."""
     if state is not None and database_path is not None:
@@ -51,8 +54,17 @@ def create_app(
         candidate_universe=CANDIDATE_UNIVERSE,
         spy_benchmark=SPY_BENCHMARK,
     )
-    app.include_router(create_router(source, refresh_service=service))
+    research = research_service or BuildResearchService(
+        provider=AlphaVantageResearchProvider(), state=SQLiteResearchBatchState(store) if store is not None else _UnavailableResearchState(),
+        candidate_universe=RESEARCH_CANDIDATE_UNIVERSE,
+    )
+    app.include_router(create_router(source, refresh_service=service, research_service=research))
     return app
+
+
+class _UnavailableResearchState:
+    def append_research_batch(self, batch) -> None:
+        raise ValueError("research persistence requires AGENTIC_PORTFOLIO_LAB_DB_PATH")
 
 
 app = create_app()
