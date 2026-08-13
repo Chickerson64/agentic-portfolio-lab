@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from dataclasses import replace
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -16,6 +17,7 @@ from agentic_portfolio_lab.domain.cash_events import CashEvent, CashEventFunding
 from agentic_portfolio_lab.domain.performance import BenchmarkPerformanceHistory, PerformanceComparison, PortfolioPerformanceHistory
 from agentic_portfolio_lab.domain.portfolio import CashBalance, Portfolio, SecurityIdentity
 from agentic_portfolio_lab.domain.valuation import BenchmarkPortfolio, PortfolioValuation
+from agentic_portfolio_lab.domain.valuation import PriceObservation
 
 SCHEMA_VERSION = 1
 
@@ -270,6 +272,50 @@ class SQLiteLocalRunStore:
         # Constructing this comparison validates equal baseline state and the shared valuation convention.
         PerformanceComparison(managed_history, benchmark_history)
         return PersistedRunState(LocalRunMetadata(uuid4(), "ACTIVE", initialized_at), funded_managed, funded_benchmark, managed_history, benchmark_history, (funding,))
+
+
+class SQLitePriceRefreshState:
+    """Persist completed refresh observations through the local-run transition.
+
+    The refresh service fetches every provider observation before calling this
+    adapter. This adapter only creates an immutable replacement aggregate and
+    leaves transaction, stale-writer, and append-preservation enforcement to
+    ``SQLiteLocalRunStore.save_transition``.
+    """
+
+    def __init__(self, store: SQLiteLocalRunStore) -> None:
+        if not isinstance(store, SQLiteLocalRunStore):
+            raise TypeError("store must be a SQLiteLocalRunStore")
+        self._store = store
+
+    def apply_price_refresh(self, observations: tuple[PriceObservation, ...]) -> None:
+        if not observations:
+            raise ValueError("a refresh must contain at least one observation")
+        if not all(isinstance(observation, PriceObservation) for observation in observations):
+            raise TypeError("observations must contain PriceObservation instances")
+        if len({observation.security for observation in observations}) != len(observations):
+            raise ValueError("a refresh must not contain duplicate securities")
+        current = self._store.open_run()
+        if current is None:
+            raise ValueError("local SQLite run has not been initialized")
+
+        existing = {
+            (observation.security, observation.observed_at): observation
+            for observation in current.price_observations
+        }
+        additions: list[PriceObservation] = []
+        for observation in observations:
+            identity = (observation.security, observation.observed_at)
+            prior = existing.get(identity)
+            if prior is None:
+                additions.append(observation)
+                existing[identity] = observation
+            elif prior != observation:
+                raise ValueError(f"price observations must not rewrite persisted artifact {identity}")
+        if additions:
+            self._store.save_transition(
+                replace(current, price_observations=(*current.price_observations, *additions))
+            )
 
 
 class SQLiteMvpReadState:

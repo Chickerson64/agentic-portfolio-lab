@@ -48,7 +48,7 @@ def create_router(state: MvpReadState, *, refresh_service: RefreshPricesService)
     @router.post("/commands/refresh-prices", response_model=PriceRefreshResponse)
     def refresh_prices() -> PriceRefreshResponse:
         try:
-            result = refresh_service.refresh(service.held_securities())
+            result = refresh_service.refresh(service().held_securities())
         except MarketPriceConfigurationError as error:
             raise HTTPException(status_code=503, detail={"code": "market_price_configuration", "message": str(error)}) from error
         except MarketPriceError as error:
