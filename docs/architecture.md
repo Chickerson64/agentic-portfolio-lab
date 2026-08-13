@@ -19,6 +19,15 @@ The expected decision and execution flow is:
 
 Coordinates the overall workflow and routes work to the right component.
 
+### FastAPI application adapter
+
+The FastAPI layer is an application adapter. It exposes existing workflows over
+HTTP, orchestrates application services, and provides the frontend API.
+
+It does not own portfolio logic, recommendation logic, validation, benchmark
+logic, execution logic, financial calculations, or domain policy. Those
+responsibilities remain inside the deterministic domain and application layers.
+
 ### Research pipeline
 
 Collects and structures evidence.
@@ -98,13 +107,16 @@ Portfolio updated
 Repeat
 ```
 
-## Early implementation shape
+## Near-term application shape
 
-The most likely initial implementation is:
+The next operator-facing implementation is expected to use:
 
 - Python backend
 - Pydantic models for structured data
-- SQLite for local persistence
-- a simple CLI or notebook-style workflow first
+- a thin FastAPI application adapter
+- Variant C as the local operator UI
+- Streamlit retained as an internal developer diagnostic tool
+- SQLite only when the weekly paper-trading workflow requires durable local
+  state
 
-Framework and provider choices remain intentionally open.
+Market-data provider selection remains intentionally open.
