@@ -2,18 +2,29 @@
 
 from __future__ import annotations
 
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from agentic_portfolio_lab.dashboard_demo import build_demo_dashboard_data
+from agentic_portfolio_lab.infrastructure.sqlite_local_state import SQLiteLocalRunStore, SQLiteMvpReadState
 
-from .queries import MvpQueryService, MvpReadState, MvpReadStateSnapshot
+from .queries import MvpReadState, MvpReadStateSnapshot
 from .routes import create_router
 
 
-def create_app(*, state: MvpReadState | None = None) -> FastAPI:
+def create_app(*, state: MvpReadState | None = None, database_path: str | None = None) -> FastAPI:
     """Create the HTTP adapter with explicit, replaceable application state."""
-    source = MvpReadStateSnapshot.from_dashboard_demo(build_demo_dashboard_data()) if state is None else state
+    if state is not None and database_path is not None:
+        raise ValueError("state and database_path are mutually exclusive")
+    configured_path = database_path if database_path is not None else os.environ.get("AGENTIC_PORTFOLIO_LAB_DB_PATH")
+    if state is not None:
+        source = state
+    elif configured_path:
+        source = SQLiteMvpReadState(SQLiteLocalRunStore(configured_path))
+    else:
+        source = MvpReadStateSnapshot.from_dashboard_demo(build_demo_dashboard_data())
     app = FastAPI(title="Agentic Portfolio Lab", version="1.0.0")
     # The static Phase 2 frontend is served locally on port 8001. Production
     # origins are intentionally not configured by this development adapter.
@@ -24,7 +35,7 @@ def create_app(*, state: MvpReadState | None = None) -> FastAPI:
         allow_methods=["GET"],
         allow_headers=[],
     )
-    app.include_router(create_router(MvpQueryService(source)))
+    app.include_router(create_router(source))
     return app
 
 

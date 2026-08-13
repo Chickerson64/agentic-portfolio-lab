@@ -96,7 +96,10 @@ class MvpQueryService:
     """
 
     def __init__(self, state: MvpReadState) -> None:
-        self._state = state
+        # Durable sources may load a fresh immutable aggregate for each HTTP
+        # query. Keep that aggregate coherent for the complete query response.
+        snapshot = getattr(state, "snapshot", None)
+        self._state = snapshot() if callable(snapshot) else state
 
     def _dashboard_view(self) -> DashboardView:
         return build_dashboard_view(
