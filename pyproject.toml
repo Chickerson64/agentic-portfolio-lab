@@ -12,7 +12,7 @@ license = { text = "Proprietary" }
 authors = [
   { name = "Chickerson" }
 ]
-dependencies = []
+dependencies = ["streamlit>=1.37"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]

@@ -208,6 +208,22 @@ from supplied, source-attributed price observations rather than stored position 
 - portfolio and benchmark snapshots use the same valuation timestamp and price convention
 - portfolio and benchmark snapshots use the same approved source/provider identity within a decision cycle
 
+### 5a. Performance Tracking
+
+Performance snapshots are immutable valuation events, not execution events. They
+may record cash-only, HOLD, or price-movement periods without a trade.
+
+External Cash Events are recorded with the snapshot history and excluded from
+investment return. The MVP uses a simple adjusted-gain basis: current value
+less baseline value and cumulative post-baseline external contributions, divided
+by baseline value plus those contributions. Managed and benchmark histories are
+compared only when their valuation timestamps and valuation provenance align and
+their recorded Cash Event schedules match; trade identities need not match.
+
+This is not time-weighted or money-weighted return and intentionally ignores
+the timing of contributions. Advanced return methods and other performance
+analytics remain deferred.
+
 ### 6. Contribution
 
 A Contribution is an external increase in portfolio cash.

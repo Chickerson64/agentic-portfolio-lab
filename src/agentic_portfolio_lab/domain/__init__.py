@@ -13,6 +13,12 @@ from .constitution import ConstitutionLoader, ConstitutionVersion, ValueManagerC
 from .decision_cycle import DecisionCycleOrchestrator, DecisionCycleResult, DecisionCycleStage
 from .journal import DecisionJournalEntry
 from .portfolio_service import PortfolioService, TargetPurchaseCalculation
+from .performance import (
+    BenchmarkPerformanceHistory,
+    PerformanceComparison,
+    PerformanceSnapshot,
+    PortfolioPerformanceHistory,
+)
 from .recommendations import (
     PortfolioRecommendation,
     RecommendationAction,
@@ -56,6 +62,7 @@ __all__ = [
     "ConstitutionLoader",
     "ConstitutionVersion",
     "BenchmarkPortfolio",
+    "BenchmarkPerformanceHistory",
     "Contribution",
     "DeterministicRiskValidator",
     "DecisionApproval",
@@ -69,6 +76,9 @@ __all__ = [
     "MissingDataReason",
     "Portfolio",
     "PortfolioComparison",
+    "PerformanceComparison",
+    "PerformanceSnapshot",
+    "PortfolioPerformanceHistory",
     "PortfolioService",
     "PortfolioValuation",
     "Position",

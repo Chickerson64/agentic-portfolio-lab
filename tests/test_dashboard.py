@@ -1,0 +1,121 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from decimal import Decimal
+from uuid import uuid4
+
+from agentic_portfolio_lab.dashboard import build_dashboard_view, format_decimal, format_percent
+from agentic_portfolio_lab.dashboard_demo import build_demo_dashboard_data, build_demo_dashboard_view
+from agentic_portfolio_lab.domain.performance import BenchmarkPerformanceHistory, PerformanceComparison, PortfolioPerformanceHistory
+from agentic_portfolio_lab.domain.portfolio import CashBalance, Portfolio
+from agentic_portfolio_lab.domain.valuation import BenchmarkPortfolio, PortfolioValuation
+
+
+def test_decimal_and_percent_formatting_is_deterministic() -> None:
+    assert format_decimal(Decimal("10.5000")) == "10.5"
+    assert format_decimal(Decimal("10.555"), places=2) == "10.56"
+    assert format_percent(Decimal("0.1234")) == "12.34%"
+
+
+def test_demo_dashboard_view_has_managed_benchmark_and_comparison_sections() -> None:
+    view = build_demo_dashboard_view()
+
+    assert view.managed.portfolio_name == "Managed Value"
+    assert view.managed.positions
+    assert view.benchmark.spy_quantity == "5"
+    assert view.comparison.managed_cumulative_return.endswith("%")
+    assert view.comparison.absolute_alpha.endswith("%")
+
+
+def test_demo_dashboard_includes_latest_decision_summary() -> None:
+    view = build_demo_dashboard_view()
+
+    assert view.latest_decision is not None
+    assert view.latest_decision.manager_action == "HOLD"
+    assert view.latest_decision.human_approval_status == "APPROVED"
+
+
+def test_demo_dashboard_data_is_immutable_from_the_view_layer() -> None:
+    data = build_demo_dashboard_data()
+    managed_before = data.managed_history.snapshots
+    benchmark_before = data.benchmark_history.snapshots
+
+    build_dashboard_view(
+        managed_history=data.managed_history,
+        benchmark_history=data.benchmark_history,
+        comparison=data.comparison,
+        journal_entry=data.journal_entry,
+        approval=data.approval,
+    )
+
+    assert data.managed_history.snapshots == managed_before
+    assert data.benchmark_history.snapshots == benchmark_before
+
+
+def test_empty_position_state_renders_without_rows() -> None:
+    created_at = datetime(2026, 8, 13, tzinfo=timezone.utc)
+    managed_portfolio = Portfolio(
+        portfolio_id=uuid4(),
+        portfolio_name="Empty",
+        base_currency="USD",
+        starting_capital=Decimal("1000"),
+        cash_balance=CashBalance("USD", Decimal("1000")),
+        created_at=created_at,
+    )
+    spy = build_demo_dashboard_data().benchmark.benchmark_security
+    benchmark_portfolio = BenchmarkPortfolio(
+        Portfolio(
+            portfolio_id=uuid4(),
+            portfolio_name="Empty Benchmark",
+            base_currency="USD",
+            starting_capital=Decimal("1000"),
+            cash_balance=CashBalance("USD", Decimal("1000")),
+            created_at=created_at,
+        ),
+        spy,
+    )
+    managed_history = PortfolioPerformanceHistory(managed_portfolio.portfolio_id, "USD").append(
+        managed_portfolio,
+        PortfolioValuation.from_portfolio(
+            managed_portfolio,
+            (),
+            as_of_timestamp=created_at,
+            market_date=created_at.date(),
+            source_price_timestamp=created_at,
+            source_provider_identity="demo-provider",
+            price_convention="regular-session-close",
+        ),
+    )
+    benchmark_history = BenchmarkPerformanceHistory.for_benchmark(benchmark_portfolio).append(
+        benchmark_portfolio,
+        PortfolioValuation.from_benchmark(
+            benchmark_portfolio,
+            (),
+            as_of_timestamp=created_at,
+            market_date=created_at.date(),
+            source_price_timestamp=created_at,
+            source_provider_identity="demo-provider",
+            price_convention="regular-session-close",
+        ),
+    )
+    comparison = PerformanceComparison(managed_history, benchmark_history)
+    view = build_dashboard_view(
+        managed_history=managed_history,
+        benchmark_history=benchmark_history,
+        comparison=comparison,
+    )
+
+    assert view.managed.positions == ()
+    assert view.benchmark.spy_quantity is None
+    assert view.latest_decision is None
+
+
+def test_optional_latest_decision_can_be_omitted() -> None:
+    data = build_demo_dashboard_data()
+    view = build_dashboard_view(
+        managed_history=data.managed_history,
+        benchmark_history=data.benchmark_history,
+        comparison=data.comparison,
+    )
+
+    assert view.latest_decision is None
