@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, localcontext
 from uuid import uuid4
+
+import pytest
 
 from agentic_portfolio_lab.dashboard import build_dashboard_view, format_decimal, format_percent
 from agentic_portfolio_lab.dashboard_demo import build_demo_dashboard_data, build_demo_dashboard_view
@@ -15,6 +18,14 @@ def test_decimal_and_percent_formatting_is_deterministic() -> None:
     assert format_decimal(Decimal("10.5000")) == "10.5"
     assert format_decimal(Decimal("10.555"), places=2) == "10.56"
     assert format_percent(Decimal("0.1234")) == "12.34%"
+
+
+def test_decimal_formatting_is_ambient_context_independent() -> None:
+    with localcontext() as context:
+        context.prec = 2
+        assert format_decimal(Decimal("123456789.555"), places=2) == "123456789.56"
+        assert format_percent(Decimal("0.123456")) == "12.35%"
+        assert format_percent(Decimal("-0.123456")) == "-12.35%"
 
 
 def test_demo_dashboard_view_has_managed_benchmark_and_comparison_sections() -> None:
@@ -33,6 +44,10 @@ def test_demo_dashboard_includes_latest_decision_summary() -> None:
     assert view.latest_decision is not None
     assert view.latest_decision.manager_action == "HOLD"
     assert view.latest_decision.human_approval_status == "APPROVED"
+
+
+def test_demo_dashboard_data_is_deterministic() -> None:
+    assert build_demo_dashboard_data() == build_demo_dashboard_data()
 
 
 def test_demo_dashboard_data_is_immutable_from_the_view_layer() -> None:
@@ -107,6 +122,8 @@ def test_empty_position_state_renders_without_rows() -> None:
 
     assert view.managed.positions == ()
     assert view.benchmark.spy_quantity is None
+    assert view.benchmark.spy_value is None
+    assert view.benchmark.cash_value == "USD 1000"
     assert view.latest_decision is None
 
 
@@ -119,3 +136,38 @@ def test_optional_latest_decision_can_be_omitted() -> None:
     )
 
     assert view.latest_decision is None
+
+
+def test_reordered_valuation_is_mapped_by_security_and_uses_valuation_pnl() -> None:
+    data = build_demo_dashboard_data()
+    snapshot = data.managed_history.snapshots[-1]
+    reordered_valuation = replace(
+        snapshot.valuation,
+        position_valuations=tuple(reversed(snapshot.valuation.position_valuations)),
+    )
+    reordered_snapshot = replace(snapshot, valuation=reordered_valuation)
+    reordered_history = replace(data.managed_history, snapshots=(*data.managed_history.snapshots[:-1], reordered_snapshot))
+
+    view = build_dashboard_view(
+        managed_history=reordered_history,
+        benchmark_history=data.benchmark_history,
+    )
+
+    rows = {row.ticker: row for row in view.managed.positions}
+    assert rows["AAPL"].market_value == "USD 330"
+    assert rows["AAPL"].portfolio_weight == "29.46%"
+    assert rows["AAPL"].unrealized_pnl == "USD 50"
+    assert rows["MSFT"].market_value == "USD 340"
+
+
+def test_dashboard_rejects_comparison_that_does_not_reference_displayed_history_instances() -> None:
+    data = build_demo_dashboard_data()
+    cloned_managed_history = replace(data.managed_history)
+    unrelated_comparison = PerformanceComparison(cloned_managed_history, data.benchmark_history)
+
+    with pytest.raises(ValueError, match="comparison histories"):
+        build_dashboard_view(
+            managed_history=data.managed_history,
+            benchmark_history=data.benchmark_history,
+            comparison=unrelated_comparison,
+        )

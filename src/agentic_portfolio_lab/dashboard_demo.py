@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from uuid import uuid4
+from uuid import UUID
 
 from .domain.approval import ApprovalDecision, DecisionApproval
 from .domain.cash_events import CashEvent
@@ -26,6 +26,10 @@ DEMO_CREATED_AT = datetime(2026, 8, 10, 12, tzinfo=UTC)
 BASELINE_AT = datetime(2026, 8, 10, 13, tzinfo=UTC)
 LATEST_AT = datetime(2026, 8, 11, 13, tzinfo=UTC)
 PRICE_TS = datetime(2026, 8, 11, 12, tzinfo=UTC)
+DEMO_MANAGED_ID = UUID("00000000-0000-0000-0000-000000000018")
+DEMO_BENCHMARK_ID = UUID("00000000-0000-0000-0000-000000000019")
+DEMO_CASH_EVENT_ID = UUID("00000000-0000-0000-0000-000000000020")
+DEMO_DECISION_CYCLE_ID = UUID("00000000-0000-0000-0000-000000000021")
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,11 +46,11 @@ def _security(ticker: str, *, exchange: str, security_type: str = "EQUITY") -> S
     return SecurityIdentity(ticker=ticker, security_type=security_type, exchange=exchange, currency="USD")
 
 
-def _managed_portfolio(cash: Decimal, *, created_at: datetime, portfolio_id=None) -> Portfolio:
+def _managed_portfolio(cash: Decimal, *, created_at: datetime, portfolio_id: UUID = DEMO_MANAGED_ID) -> Portfolio:
     aapl = _security("AAPL", exchange="NASDAQ")
     msft = _security("MSFT", exchange="NASDAQ")
     return Portfolio(
-        portfolio_id=portfolio_id or uuid4(),
+        portfolio_id=portfolio_id,
         portfolio_name="Managed Value",
         base_currency="USD",
         starting_capital=Decimal("1000"),
@@ -59,11 +63,11 @@ def _managed_portfolio(cash: Decimal, *, created_at: datetime, portfolio_id=None
     )
 
 
-def _benchmark_portfolio(cash: Decimal, *, created_at: datetime, portfolio_id=None) -> BenchmarkPortfolio:
+def _benchmark_portfolio(cash: Decimal, *, created_at: datetime, portfolio_id: UUID = DEMO_BENCHMARK_ID) -> BenchmarkPortfolio:
     spy = _security("SPY", exchange="NYSEARCA", security_type="ETF")
     return BenchmarkPortfolio(
         Portfolio(
-            portfolio_id=portfolio_id or uuid4(),
+            portfolio_id=portfolio_id,
             portfolio_name="Passive Index",
             base_currency="USD",
             starting_capital=Decimal("1000"),
@@ -106,7 +110,7 @@ def _demo_cash_event() -> CashEvent:
         currency="USD",
         effective_at=LATEST_AT,
         source="manual contribution",
-        event_id=uuid4(),
+        event_id=DEMO_CASH_EVENT_ID,
     )
 
 
@@ -140,7 +144,7 @@ def _demo_research_batch(portfolio: Portfolio) -> ResearchBatch:
     )
     return ResearchBatch(
         batch_id="demo_batch_001",
-        decision_cycle_id=uuid4(),
+        decision_cycle_id=DEMO_DECISION_CYCLE_ID,
         portfolio_id=portfolio.portfolio_id,
         manager_type="VALUE",
         created_at=DEMO_CREATED_AT,
@@ -150,8 +154,8 @@ def _demo_research_batch(portfolio: Portfolio) -> ResearchBatch:
 
 
 def build_demo_dashboard_data() -> DashboardDemoData:
-    managed_id = uuid4()
-    benchmark_id = uuid4()
+    managed_id = DEMO_MANAGED_ID
+    benchmark_id = DEMO_BENCHMARK_ID
     cash_event = _demo_cash_event()
 
     managed_history = PortfolioPerformanceHistory(managed_id, "USD")
