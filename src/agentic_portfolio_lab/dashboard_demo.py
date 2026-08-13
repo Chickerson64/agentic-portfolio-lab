@@ -1,4 +1,4 @@
-"""Deterministic in-memory demo state for the initial dashboard."""
+"""Deterministic in-memory demo state for the dashboard."""
 
 from __future__ import annotations
 
@@ -7,19 +7,20 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID
 
+from .dashboard import DashboardView, build_dashboard_view
 from .domain.approval import ApprovalDecision, DecisionApproval
 from .domain.cash_events import CashEvent
 from .domain.constitution import ConstitutionLoader
 from .domain.journal import DecisionJournalEntry
 from .domain.performance import BenchmarkPerformanceHistory, PerformanceComparison, PortfolioPerformanceHistory
 from .domain.portfolio import CashBalance, Portfolio, Position, SecurityIdentity
-from .domain.recommendations import PortfolioRecommendation, RecommendationAction, RecommendationEvidenceReference, ReviewTrigger
+from .domain.recommendations import PortfolioRecommendation, RecommendationAction, RecommendationEvidenceReference, ReviewTrigger, ReviewTriggerType
 from .domain.research import EvidenceItem, ResearchBatch, ResearchPacket, ResearchSection
 from .domain.risk_validation import RiskRuleResult, RiskValidationResult, RiskValidationStatus
+from .domain.reviewer import AIReviewerReviewContext, ReviewDecision, ReviewFinding, ReviewFindingCategory, ReviewFindingSeverity, ReviewerResult
 from .domain.value_manager_workflow import ValueManagerDecisionResult
 from .domain.valuation import BenchmarkPortfolio, PortfolioValuation, PriceObservation
 from .domain.value_manager import ValueManagerDecisionContext
-from .dashboard import DashboardView, build_dashboard_view
 
 UTC = timezone.utc
 DEMO_CREATED_AT = datetime(2026, 8, 10, 12, tzinfo=UTC)
@@ -36,7 +37,6 @@ DEMO_DECISION_CYCLE_ID = UUID("00000000-0000-0000-0000-000000000021")
 class DashboardDemoData:
     managed_history: PortfolioPerformanceHistory
     benchmark_history: BenchmarkPerformanceHistory
-    benchmark: BenchmarkPortfolio
     comparison: PerformanceComparison
     journal_entry: DecisionJournalEntry
     approval: DecisionApproval
@@ -80,13 +80,13 @@ def _benchmark_portfolio(cash: Decimal, *, created_at: datetime, portfolio_id: U
 
 
 def _valuation(portfolio: Portfolio, *, timestamp: datetime, provider: str, prices: dict[SecurityIdentity, Decimal]) -> PortfolioValuation:
-    source_price_timestamp = timestamp - timedelta(hours=1)
+    observed_at = timestamp - timedelta(hours=1)
     observations = tuple(
         PriceObservation(
             security=position.security,
             observed_price=prices[position.security],
             market_date=timestamp.date(),
-            observed_at=source_price_timestamp,
+            observed_at=observed_at,
             currency=portfolio.base_currency,
             source_provider_identity=provider,
             price_convention="regular-session-close",
@@ -98,7 +98,7 @@ def _valuation(portfolio: Portfolio, *, timestamp: datetime, provider: str, pric
         observations,
         as_of_timestamp=timestamp,
         market_date=timestamp.date(),
-        source_price_timestamp=source_price_timestamp,
+        source_price_timestamp=observed_at,
         source_provider_identity=provider,
         price_convention="regular-session-close",
     )
@@ -159,7 +159,9 @@ def build_demo_dashboard_data() -> DashboardDemoData:
     cash_event = _demo_cash_event()
 
     managed_history = PortfolioPerformanceHistory(managed_id, "USD")
-    benchmark_history = BenchmarkPerformanceHistory.for_benchmark(_benchmark_portfolio(Decimal("1000"), created_at=DEMO_CREATED_AT, portfolio_id=benchmark_id))
+    benchmark_history = BenchmarkPerformanceHistory.for_benchmark(
+        _benchmark_portfolio(Decimal("1000"), created_at=DEMO_CREATED_AT, portfolio_id=benchmark_id)
+    )
 
     baseline_managed = _managed_portfolio(Decimal("250"), created_at=DEMO_CREATED_AT, portfolio_id=managed_id)
     baseline_benchmark = _benchmark_portfolio(Decimal("250"), created_at=DEMO_CREATED_AT, portfolio_id=benchmark_id)
@@ -238,7 +240,7 @@ def build_demo_dashboard_data() -> DashboardDemoData:
         ),
         why_not_spy="The dashboard demo is intentionally showing a HOLD summary.",
         thesis_invalidation=(),
-        review_triggers=(ReviewTrigger("EVENT_BASED", "Refresh when the demo fixture changes."),),
+        review_triggers=(ReviewTrigger(ReviewTriggerType.EVENT_BASED, "Refresh when the demo fixture changes."),),
     )
     decision_result = ValueManagerDecisionResult(
         context=context,
@@ -252,23 +254,42 @@ def build_demo_dashboard_data() -> DashboardDemoData:
         status=RiskValidationStatus.PASSED,
         rule_results=(rule,),
     )
+    reviewer_context = AIReviewerReviewContext(
+        decision_result=decision_result,
+        risk_validation_result=validation,
+        constitution=constitution,
+    )
+    reviewer_result = ReviewerResult(
+        context=reviewer_context,
+        decision=ReviewDecision.APPROVE,
+        findings=(
+            ReviewFinding(
+                severity=ReviewFindingSeverity.INFO,
+                category=ReviewFindingCategory.EVIDENCE_USAGE,
+                message="The HOLD recommendation cites the supplied quarterly report directly.",
+                related_evidence_ids=("demo_ev_001",),
+                related_recommendation_field="evidence",
+            ),
+        ),
+        reviewed_at=LATEST_AT + timedelta(minutes=15),
+    )
     journal_entry = DecisionJournalEntry(
         decision_result=decision_result,
         risk_validation_result=validation,
-        journaled_at=LATEST_AT,
+        journaled_at=LATEST_AT + timedelta(minutes=20),
+        reviewer_result=reviewer_result,
     )
     approval = DecisionApproval(
         journal_entry=journal_entry,
         decision_maker_id="demo-human",
         decision=ApprovalDecision.APPROVED,
-        decided_at=LATEST_AT,
+        decided_at=LATEST_AT + timedelta(minutes=30),
         comment="Approved for the dashboard demo.",
     )
 
     return DashboardDemoData(
         managed_history=managed_history,
         benchmark_history=benchmark_history,
-        benchmark=latest_benchmark,
         comparison=PerformanceComparison(managed_history, benchmark_history),
         journal_entry=journal_entry,
         approval=approval,

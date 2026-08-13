@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Context, Decimal, MAX_EMAX, MAX_PREC, MIN_EMIN, ROUND_HALF_UP, localcontext
 from typing import Iterable
 
@@ -10,8 +11,10 @@ from .domain.approval import DecisionApproval
 from .domain.journal import DecisionJournalEntry
 from .domain.performance import BenchmarkPerformanceHistory, PerformanceComparison, PortfolioPerformanceHistory
 from .domain.portfolio import Portfolio, Position, SecurityIdentity
+from .domain.recommendations import PortfolioRecommendation
+from .domain.risk_validation import RiskRuleResult
+from .domain.reviewer import ReviewFinding
 from .domain.valuation import PortfolioValuation, PositionValuation
-
 
 _PRESENTATION_DECIMAL_CONTEXT = Context(prec=MAX_PREC, Emax=MAX_EMAX, Emin=MIN_EMIN)
 
@@ -77,16 +80,83 @@ class ComparisonPanel:
 
 
 @dataclass(frozen=True, slots=True)
-class LatestDecisionPanel:
-    manager_action: str
-    ticker: str | None
-    target_weight: str | None
+class DecisionSummaryPanel:
+    action: str
+    ticker: str
+    target_weight: str
     confidence: str
-    reviewer_decision: str | None
-    human_approval_status: str | None
+    constitution_version: str
+    decision_cycle_id: str
+    decision_timestamp: str
+
+
+@dataclass(frozen=True, slots=True)
+class DecisionNarrativePanel:
+    thesis: str | None
     decision_rationale: str
-    investment_thesis: str | None
+    valuation: str
     why_not_spy: str
+    risks: tuple[str, ...]
+    thesis_invalidation: tuple[str, ...]
+    review_triggers: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class EvidencePanel:
+    evidence_id: str
+    source_type: str
+    source_title: str
+    source_date: str
+    claim_supported: str
+
+
+@dataclass(frozen=True, slots=True)
+class ValidationRulePanel:
+    rule_id: str
+    status: str
+    reason: str
+    actual_value: str | None
+    allowed_threshold: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ValidationPanel:
+    status: str
+    rules: tuple[ValidationRulePanel, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewerFindingPanel:
+    severity: str
+    category: str
+    message: str
+    related_evidence_ids: tuple[str, ...]
+    related_recommendation_field: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewerPanel:
+    decision: str | None
+    findings: tuple[ReviewerFindingPanel, ...]
+    reviewed_at: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ApprovalPanel:
+    decision: str | None
+    decision_maker_id: str | None
+    decided_at: str | None
+    comment: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class LatestDecisionPanel:
+    summary: DecisionSummaryPanel
+    narrative: DecisionNarrativePanel
+    evidence: tuple[EvidencePanel, ...]
+    validation: ValidationPanel
+    reviewer: ReviewerPanel
+    approval: ApprovalPanel
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,6 +237,50 @@ def _comparison_panel(comparison: PerformanceComparison) -> ComparisonPanel:
     )
 
 
+def _format_datetime(value: datetime) -> str:
+    return value.isoformat(timespec="seconds")
+
+
+def _format_ticker(recommendation: PortfolioRecommendation) -> str:
+    return recommendation.ticker if recommendation.ticker is not None else "n/a"
+
+
+def _format_target_weight(recommendation: PortfolioRecommendation) -> str:
+    return "n/a" if recommendation.target_weight is None else format_percent(recommendation.target_weight)
+
+
+def _format_validation_rule(rule: RiskRuleResult) -> ValidationRulePanel:
+    actual_value = None if rule.actual_value is None else format_decimal(rule.actual_value) if isinstance(rule.actual_value, Decimal) else str(rule.actual_value)
+    allowed_threshold = None if rule.allowed_threshold is None else format_decimal(rule.allowed_threshold) if isinstance(rule.allowed_threshold, Decimal) else str(rule.allowed_threshold)
+    return ValidationRulePanel(
+        rule_id=rule.rule_id,
+        status=rule.status.value,
+        reason=rule.reason,
+        actual_value=actual_value,
+        allowed_threshold=allowed_threshold,
+    )
+
+
+def _format_finding(finding: ReviewFinding) -> ReviewerFindingPanel:
+    return ReviewerFindingPanel(
+        severity=finding.severity.value,
+        category=finding.category.value,
+        message=finding.message,
+        related_evidence_ids=finding.related_evidence_ids,
+        related_recommendation_field=finding.related_recommendation_field,
+    )
+
+
+def _format_evidence(reference) -> EvidencePanel:
+    return EvidencePanel(
+        evidence_id=reference.evidence_id,
+        source_type=reference.source_type,
+        source_title=reference.source_title,
+        source_date=reference.source_date.isoformat(),
+        claim_supported=reference.claim_supported,
+    )
+
+
 def _decision_panel(
     *,
     journal_entry: DecisionJournalEntry | None = None,
@@ -178,23 +292,51 @@ def _decision_panel(
         raise ValueError("approval journal_entry must match supplied journal_entry")
     source = approval.journal_entry if approval is not None else journal_entry
     assert source is not None
-    recommendation = source.decision_result.recommendation
-    reviewer_decision = None
-    if source.reviewer_result is not None:
-        reviewer_decision = source.reviewer_result.decision.value
-    human_approval_status = None if approval is None else approval.decision.value
-    target_weight = None if recommendation.target_weight is None else format_percent(recommendation.target_weight)
-    confidence = f"{recommendation.confidence_score}/100"
-    return LatestDecisionPanel(
-        manager_action=recommendation.action.value,
-        ticker=recommendation.ticker,
-        target_weight=target_weight,
-        confidence=confidence,
-        reviewer_decision=reviewer_decision,
-        human_approval_status=human_approval_status,
+    decision_result = source.decision_result
+    recommendation = decision_result.recommendation
+    risk_validation = source.risk_validation_result
+    reviewer_result = source.reviewer_result
+
+    summary = DecisionSummaryPanel(
+        action=recommendation.action.value,
+        ticker=_format_ticker(recommendation),
+        target_weight=_format_target_weight(recommendation),
+        confidence=f"{recommendation.confidence_score}/100",
+        constitution_version=decision_result.constitution_version,
+        decision_cycle_id=str(decision_result.decision_cycle_id),
+        decision_timestamp=_format_datetime(decision_result.produced_at),
+    )
+    narrative = DecisionNarrativePanel(
+        thesis=recommendation.investment_thesis,
         decision_rationale=recommendation.decision_rationale,
-        investment_thesis=recommendation.investment_thesis,
+        valuation=recommendation.valuation,
         why_not_spy=recommendation.why_not_spy,
+        risks=recommendation.risks,
+        thesis_invalidation=recommendation.thesis_invalidation,
+        review_triggers=tuple(trigger.description for trigger in recommendation.review_triggers),
+    )
+    validation = ValidationPanel(
+        status=risk_validation.status.value,
+        rules=tuple(_format_validation_rule(rule) for rule in risk_validation.rule_results),
+    )
+    reviewer = ReviewerPanel(
+        decision=None if reviewer_result is None else reviewer_result.decision.value,
+        findings=() if reviewer_result is None else tuple(_format_finding(finding) for finding in reviewer_result.findings),
+        reviewed_at=None if reviewer_result is None else _format_datetime(reviewer_result.reviewed_at),
+    )
+    approval_panel = ApprovalPanel(
+        decision=None if approval is None else approval.decision.value,
+        decision_maker_id=None if approval is None else approval.decision_maker_id,
+        decided_at=None if approval is None else _format_datetime(approval.decided_at),
+        comment=None if approval is None else approval.comment,
+    )
+    return LatestDecisionPanel(
+        summary=summary,
+        narrative=narrative,
+        evidence=tuple(_format_evidence(reference) for reference in recommendation.evidence),
+        validation=validation,
+        reviewer=reviewer,
+        approval=approval_panel,
     )
 
 
@@ -245,18 +387,21 @@ def _write_position_rows(rows: Iterable[PositionRow]) -> list[dict[str, str | No
     ]
 
 
-def _display_ticker(decision: LatestDecisionPanel) -> str:
-    """Return an explicit no-security display for a valid HOLD recommendation."""
-    return decision.ticker or "n/a"
+def _semantic_color(label: str) -> str:
+    if label in {"BUY", "APPROVED", "PASSED", "APPROVE"}:
+        return "normal"
+    if label in {"HOLD"}:
+        return "off"
+    if label in {"REQUEST_CHANGES", "FAILED"}:
+        return "inverse"
+    if label in {"REJECTED", "CRITICAL", "EXPIRED"}:
+        return "inverse"
+    return "off"
 
 
 def _portfolio_heading(panel: PortfolioPanel) -> str:
     """Keep the human portfolio name, not its technical UUID, in the primary label."""
     return panel.portfolio_name
-
-
-def _display_reviewer(decision: LatestDecisionPanel) -> str:
-    return decision.reviewer_decision or "Not reviewed"
 
 
 def _metric_delta(value: str) -> tuple[str, str]:
@@ -266,6 +411,11 @@ def _metric_delta(value: str) -> tuple[str, str]:
     if value.startswith("0"):
         return "Neutral", "off"
     return "Positive", "normal"
+
+
+def _allocation_chart_data(rows: Iterable[PositionRow]) -> dict[str, Decimal]:
+    """Expose the valuation-provided allocation weights without recalculation."""
+    return {row.ticker: row.allocation_weight for row in rows}
 
 
 def render_streamlit_dashboard(view: DashboardView) -> None:
@@ -305,10 +455,14 @@ def render_streamlit_dashboard(view: DashboardView) -> None:
 
     st.divider()
     st.subheader("Holdings")
-    st.table(_write_position_rows(view.managed.positions) if view.managed.positions else [{"Ticker": "No positions", "Quantity": "", "Market Value": "", "Weight": "", "Cost Basis": "", "Avg Cost": "", "Unrealized P&L": ""}])
+    st.table(
+        _write_position_rows(view.managed.positions)
+        if view.managed.positions
+        else [{"Ticker": "No positions", "Quantity": "", "Market Value": "", "Weight": "", "Cost Basis": "", "Avg Cost": "", "Unrealized P&L": ""}]
+    )
     if view.managed.positions:
         st.caption("Allocation by existing valuation weight")
-        st.bar_chart({row.ticker: row.allocation_weight for row in view.managed.positions})
+        st.bar_chart(_allocation_chart_data(view.managed.positions))
 
     st.divider()
     st.subheader("Performance")
@@ -324,20 +478,89 @@ def render_streamlit_dashboard(view: DashboardView) -> None:
         ),
         strict=True,
     ):
-        delta, color = _metric_delta(value)
-        column.metric(label, value, delta=delta, delta_color=color)
+        delta, delta_color = _metric_delta(value)
+        column.metric(label, value, delta=delta, delta_color=delta_color)
 
     if view.latest_decision is not None:
         st.divider()
         st.subheader("Latest Decision")
-        decision_cols = st.columns(6)
-        decision_cols[0].metric("Action", view.latest_decision.manager_action)
-        decision_cols[1].metric("Ticker", _display_ticker(view.latest_decision))
-        decision_cols[2].metric("Target Weight", view.latest_decision.target_weight or "n/a")
-        decision_cols[3].metric("Confidence", view.latest_decision.confidence)
-        decision_cols[4].metric("Reviewer", _display_reviewer(view.latest_decision))
-        decision_cols[5].metric("Human Approval", view.latest_decision.human_approval_status or "n/a")
-        st.caption(f"Rationale: {view.latest_decision.decision_rationale}")
-        if view.latest_decision.investment_thesis is not None:
-            st.caption(f"Thesis: {view.latest_decision.investment_thesis}")
-        st.caption(f"Why not SPY: {view.latest_decision.why_not_spy}")
+        with st.expander("Open read-only decision memo", expanded=False):
+            st.caption("Synthetic, in-memory, read-only decision memo.")
+            summary = view.latest_decision.summary
+            summary_cols = st.columns(4)
+            summary_cols[0].metric("Action", summary.action, delta_color=_semantic_color(summary.action))
+            summary_cols[1].metric("Ticker", summary.ticker)
+            summary_cols[2].metric("Target Weight", summary.target_weight)
+            summary_cols[3].metric("Confidence", summary.confidence)
+            meta_cols = st.columns(3)
+            meta_cols[0].metric("Constitution", summary.constitution_version)
+            meta_cols[1].metric("Decision Cycle", summary.decision_cycle_id)
+            meta_cols[2].metric("Timestamp", summary.decision_timestamp)
+
+            st.divider()
+            st.subheader("Investment Thesis")
+            st.write(f"**Thesis:** {view.latest_decision.narrative.thesis or 'Not provided'}")
+            st.write(f"**Rationale:** {view.latest_decision.narrative.decision_rationale}")
+            st.write(f"**Valuation:** {view.latest_decision.narrative.valuation}")
+            st.write(f"**Why not SPY:** {view.latest_decision.narrative.why_not_spy}")
+
+            st.divider()
+            st.subheader("Risks")
+            st.write("Risk items:")
+            for item in view.latest_decision.narrative.risks:
+                st.write(f"- {item}")
+            if view.latest_decision.narrative.thesis_invalidation:
+                with st.expander("Thesis invalidation conditions", expanded=False):
+                    for item in view.latest_decision.narrative.thesis_invalidation:
+                        st.write(f"- {item}")
+            if view.latest_decision.narrative.review_triggers:
+                with st.expander("Review triggers", expanded=False):
+                    for item in view.latest_decision.narrative.review_triggers:
+                        st.write(f"- {item}")
+
+            st.divider()
+            st.subheader("Evidence")
+            for evidence in view.latest_decision.evidence:
+                with st.expander(f"{evidence.evidence_id}: {evidence.source_title}", expanded=False):
+                    st.write(f"Source type: {evidence.source_type}")
+                    st.write(f"Source date: {evidence.source_date}")
+                    st.write(f"Claim supported: {evidence.claim_supported}")
+
+            st.divider()
+            st.subheader("Deterministic Validation")
+            st.metric("Overall Status", view.latest_decision.validation.status, delta_color=_semantic_color(view.latest_decision.validation.status))
+            for rule in view.latest_decision.validation.rules:
+                with st.expander(rule.rule_id, expanded=False):
+                    st.write(f"Status: {rule.status}")
+                    st.write(f"Reason: {rule.reason}")
+                    st.write(f"Actual value: {rule.actual_value or 'n/a'}")
+                    st.write(f"Allowed threshold: {rule.allowed_threshold or 'n/a'}")
+
+            st.divider()
+            st.subheader("AI Reviewer")
+            if view.latest_decision.reviewer.decision is None:
+                st.write("Not reviewed")
+            else:
+                st.metric("Reviewer Decision", view.latest_decision.reviewer.decision, delta_color=_semantic_color(view.latest_decision.reviewer.decision))
+                st.write(f"Reviewed at: {view.latest_decision.reviewer.reviewed_at}")
+                if view.latest_decision.reviewer.findings:
+                    for finding in view.latest_decision.reviewer.findings:
+                        with st.expander(f"{finding.severity} - {finding.category}", expanded=False):
+                            st.write(finding.message)
+                            if finding.related_evidence_ids:
+                                st.write(f"Related evidence: {', '.join(finding.related_evidence_ids)}")
+                            if finding.related_recommendation_field is not None:
+                                st.write(f"Related recommendation field: {finding.related_recommendation_field}")
+                else:
+                    st.write("No findings")
+
+            st.divider()
+            st.subheader("Human Approval")
+            if view.latest_decision.approval.decision is None:
+                st.write("Awaiting human decision")
+            else:
+                st.metric("Approval", view.latest_decision.approval.decision, delta_color=_semantic_color(view.latest_decision.approval.decision))
+                st.write(f"Approver: {view.latest_decision.approval.decision_maker_id}")
+                st.write(f"Timestamp: {view.latest_decision.approval.decided_at}")
+                if view.latest_decision.approval.comment is not None:
+                    st.write(f"Comment: {view.latest_decision.approval.comment}")
