@@ -17,6 +17,7 @@ from .domain.reviewer import ReviewFinding
 from .domain.valuation import PortfolioValuation, PositionValuation
 
 _PRESENTATION_DECIMAL_CONTEXT = Context(prec=MAX_PREC, Emax=MAX_EMAX, Emin=MIN_EMIN)
+DASHBOARD_TAB_LABELS = ("Overview", "Holdings", "Performance", "Decision Memo")
 
 
 def format_decimal(value: Decimal, *, places: int | None = None) -> str:
@@ -437,54 +438,57 @@ def render_streamlit_dashboard(view: DashboardView) -> None:
     summary_cols[2].metric("Absolute Alpha", view.comparison.absolute_alpha, delta=alpha_delta, delta_color=alpha_color)
     summary_cols[3].metric("Cash", view.managed.cash_value)
 
-    st.divider()
-    st.subheader("Portfolio Overview")
-    left, right = st.columns(2)
-    with left:
-        st.subheader("Managed Portfolio")
-        st.metric("Portfolio", _portfolio_heading(view.managed))
-        st.caption(f"Portfolio ID: {view.managed.portfolio_id}")
-        st.metric("Invested Value", view.managed.invested_value)
+    overview_tab, holdings_tab, performance_tab, decision_tab = st.tabs(DASHBOARD_TAB_LABELS)
 
-    with right:
-        st.subheader("Passive Benchmark")
-        st.metric("Benchmark Total Value", view.benchmark.total_value)
-        st.metric("Benchmark Cash", view.benchmark.cash_value)
-        st.metric("SPY Quantity", view.benchmark.spy_quantity or "0")
-        st.metric("SPY Value", view.benchmark.spy_value or "Not held")
+    with overview_tab:
+        st.subheader("Portfolio Overview")
+        left, right = st.columns(2)
+        with left:
+            st.subheader("Managed Portfolio")
+            st.metric("Portfolio", _portfolio_heading(view.managed))
+            st.caption(f"Portfolio ID: {view.managed.portfolio_id}")
+            st.metric("Invested Value", view.managed.invested_value)
 
-    st.divider()
-    st.subheader("Holdings")
-    st.table(
-        _write_position_rows(view.managed.positions)
-        if view.managed.positions
-        else [{"Ticker": "No positions", "Quantity": "", "Market Value": "", "Weight": "", "Cost Basis": "", "Avg Cost": "", "Unrealized P&L": ""}]
-    )
-    if view.managed.positions:
-        st.caption("Allocation by existing valuation weight")
-        st.bar_chart(_allocation_chart_data(view.managed.positions))
+        with right:
+            st.subheader("Passive Benchmark")
+            st.metric("Benchmark Total Value", view.benchmark.total_value)
+            st.metric("Benchmark Cash", view.benchmark.cash_value)
+            st.metric("SPY Quantity", view.benchmark.spy_quantity or "0")
+            st.metric("SPY Value", view.benchmark.spy_value or "Not held")
 
-    st.divider()
-    st.subheader("Performance")
-    comparison_cols = st.columns(4)
-    for column, label, value in zip(
-        comparison_cols,
-        ("Managed Return", "Benchmark Return", "Absolute Alpha", "Relative Alpha"),
-        (
-            view.comparison.managed_cumulative_return,
-            view.comparison.benchmark_cumulative_return,
-            view.comparison.absolute_alpha,
-            view.comparison.relative_alpha,
-        ),
-        strict=True,
-    ):
-        delta, delta_color = _metric_delta(value)
-        column.metric(label, value, delta=delta, delta_color=delta_color)
+    with holdings_tab:
+        st.subheader("Holdings")
+        st.table(
+            _write_position_rows(view.managed.positions)
+            if view.managed.positions
+            else [{"Ticker": "No positions", "Quantity": "", "Market Value": "", "Weight": "", "Cost Basis": "", "Avg Cost": "", "Unrealized P&L": ""}]
+        )
+        if view.managed.positions:
+            st.caption("Allocation by existing valuation weight")
+            st.bar_chart(_allocation_chart_data(view.managed.positions))
 
-    if view.latest_decision is not None:
-        st.divider()
-        st.subheader("Latest Decision")
-        with st.expander("Open read-only decision memo", expanded=False):
+    with performance_tab:
+        st.subheader("Performance")
+        comparison_cols = st.columns(4)
+        for column, label, value in zip(
+            comparison_cols,
+            ("Managed Return", "Benchmark Return", "Absolute Alpha", "Relative Alpha"),
+            (
+                view.comparison.managed_cumulative_return,
+                view.comparison.benchmark_cumulative_return,
+                view.comparison.absolute_alpha,
+                view.comparison.relative_alpha,
+            ),
+            strict=True,
+        ):
+            delta, delta_color = _metric_delta(value)
+            column.metric(label, value, delta=delta, delta_color=delta_color)
+
+    with decision_tab:
+        st.subheader("Decision Memo")
+        if view.latest_decision is None:
+            st.write("No journaled decision is available.")
+        else:
             st.caption("Synthetic, in-memory, read-only decision memo.")
             summary = view.latest_decision.summary
             summary_cols = st.columns(4)

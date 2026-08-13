@@ -8,6 +8,7 @@ from uuid import UUID
 import pytest
 
 from agentic_portfolio_lab.dashboard import (
+    DASHBOARD_TAB_LABELS,
     _allocation_chart_data,
     _format_ticker,
     _metric_delta,
@@ -65,6 +66,10 @@ def test_demo_dashboard_view_has_managed_benchmark_and_comparison_sections() -> 
     assert view.comparison.absolute_alpha.endswith("%")
     assert _portfolio_heading(view.managed) == "Managed Value"
     assert view.managed.portfolio_id not in _portfolio_heading(view.managed)
+
+
+def test_dashboard_uses_streamlit_tabs_for_main_read_only_sections() -> None:
+    assert DASHBOARD_TAB_LABELS == ("Overview", "Holdings", "Performance", "Decision Memo")
 
 
 def test_demo_dashboard_includes_latest_decision_summary() -> None:
