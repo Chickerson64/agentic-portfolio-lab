@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID
 
-from .dashboard import DashboardView, build_dashboard_view
+from .dashboard import DashboardView, DecisionHistoryArtifacts, build_dashboard_view
 from .domain.approval import ApprovalDecision, DecisionApproval
 from .domain.cash_events import CashEvent
 from .domain.constitution import ConstitutionLoader
@@ -16,21 +16,27 @@ from .domain.performance import BenchmarkPerformanceHistory, PerformanceComparis
 from .domain.portfolio import CashBalance, Portfolio, Position, SecurityIdentity
 from .domain.recommendations import PortfolioRecommendation, RecommendationAction, RecommendationEvidenceReference, ReviewTrigger, ReviewTriggerType
 from .domain.research import EvidenceItem, MissingData, MissingDataReason, ResearchBatch, ResearchPacket, ResearchSection
-from .domain.risk_validation import RiskRuleResult, RiskValidationResult, RiskValidationStatus
+from .domain.risk_validation import DeterministicRiskValidator, RiskRuleResult, RiskValidationResult, RiskValidationStatus
 from .domain.reviewer import AIReviewerReviewContext, ReviewDecision, ReviewFinding, ReviewFindingCategory, ReviewFindingSeverity, ReviewerResult
 from .domain.value_manager_workflow import ValueManagerDecisionResult
 from .domain.valuation import BenchmarkPortfolio, PortfolioValuation, PriceObservation
 from .domain.value_manager import ValueManagerDecisionContext
+from .domain.trades import ExecutedTrade
 
 UTC = timezone.utc
 DEMO_CREATED_AT = datetime(2026, 8, 10, 12, tzinfo=UTC)
-BASELINE_AT = datetime(2026, 8, 10, 13, tzinfo=UTC)
+BASELINE_AT = datetime(2026, 8, 10, 14, tzinfo=UTC)
 LATEST_AT = datetime(2026, 8, 11, 13, tzinfo=UTC)
+LATEST_SNAPSHOT_AT = LATEST_AT + timedelta(minutes=20)
 PRICE_TS = datetime(2026, 8, 11, 12, tzinfo=UTC)
 DEMO_MANAGED_ID = UUID("00000000-0000-0000-0000-000000000018")
 DEMO_BENCHMARK_ID = UUID("00000000-0000-0000-0000-000000000019")
 DEMO_CASH_EVENT_ID = UUID("00000000-0000-0000-0000-000000000020")
 DEMO_DECISION_CYCLE_ID = UUID("00000000-0000-0000-0000-000000000021")
+DEMO_BUY_DECISION_CYCLE_ID = UUID("00000000-0000-0000-0000-000000000022")
+DEMO_BUY_PROPOSAL_ID = UUID("00000000-0000-0000-0000-000000000023")
+DEMO_BUY_VALIDATED_TRADE_ID = UUID("00000000-0000-0000-0000-000000000024")
+DEMO_BUY_EXECUTED_TRADE_ID = UUID("00000000-0000-0000-0000-000000000025")
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,13 +46,20 @@ class DashboardDemoData:
     comparison: PerformanceComparison
     journal_entry: DecisionJournalEntry
     approval: DecisionApproval
+    history_entries: tuple[DecisionHistoryArtifacts, ...]
 
 
 def _security(ticker: str, *, exchange: str, security_type: str = "EQUITY") -> SecurityIdentity:
     return SecurityIdentity(ticker=ticker, security_type=security_type, exchange=exchange, currency="USD")
 
 
-def _managed_portfolio(cash: Decimal, *, created_at: datetime, portfolio_id: UUID = DEMO_MANAGED_ID) -> Portfolio:
+def _managed_portfolio(
+    cash: Decimal,
+    *,
+    created_at: datetime,
+    portfolio_id: UUID = DEMO_MANAGED_ID,
+    decision_cycle_id: UUID | None = None,
+) -> Portfolio:
     aapl = _security("AAPL", exchange="NASDAQ")
     msft = _security("MSFT", exchange="NASDAQ")
     return Portfolio(
@@ -60,6 +73,7 @@ def _managed_portfolio(cash: Decimal, *, created_at: datetime, portfolio_id: UUI
             Position(aapl, Decimal("2"), Decimal("280"), Decimal("150")),
             Position(msft, Decimal("1"), Decimal("180"), Decimal("320")),
         ),
+        decision_cycle_id=decision_cycle_id,
     )
 
 
@@ -114,7 +128,12 @@ def _demo_cash_event() -> CashEvent:
     )
 
 
-def _demo_research_batch(portfolio: Portfolio) -> ResearchBatch:
+def _demo_research_batch(
+    portfolio: Portfolio,
+    *,
+    batch_id: str = "demo_batch_001",
+    decision_cycle_id: UUID = DEMO_DECISION_CYCLE_ID,
+) -> ResearchBatch:
     aapl_evidence = (
         EvidenceItem(
             evidence_id="demo_ev_001",
@@ -230,8 +249,8 @@ def _demo_research_batch(portfolio: Portfolio) -> ResearchBatch:
         ),
     )
     return ResearchBatch(
-        batch_id="demo_batch_001",
-        decision_cycle_id=DEMO_DECISION_CYCLE_ID,
+        batch_id=batch_id,
+        decision_cycle_id=decision_cycle_id,
         portfolio_id=portfolio.portfolio_id,
         manager_type="VALUE",
         created_at=DEMO_CREATED_AT,
@@ -250,7 +269,12 @@ def build_demo_dashboard_data() -> DashboardDemoData:
         _benchmark_portfolio(Decimal("1000"), created_at=DEMO_CREATED_AT, portfolio_id=benchmark_id)
     )
 
-    baseline_managed = _managed_portfolio(Decimal("250"), created_at=DEMO_CREATED_AT, portfolio_id=managed_id)
+    baseline_managed = _managed_portfolio(
+        Decimal("250"),
+        created_at=DEMO_CREATED_AT,
+        portfolio_id=managed_id,
+        decision_cycle_id=DEMO_BUY_DECISION_CYCLE_ID,
+    )
     baseline_benchmark = _benchmark_portfolio(Decimal("250"), created_at=DEMO_CREATED_AT, portfolio_id=benchmark_id)
     managed_history = managed_history.append(
         baseline_managed,
@@ -274,13 +298,18 @@ def build_demo_dashboard_data() -> DashboardDemoData:
         ),
     )
 
-    latest_managed = _managed_portfolio(Decimal("450"), created_at=DEMO_CREATED_AT, portfolio_id=managed_id)
+    latest_managed = _managed_portfolio(
+        Decimal("450"),
+        created_at=DEMO_CREATED_AT,
+        portfolio_id=managed_id,
+        decision_cycle_id=DEMO_DECISION_CYCLE_ID,
+    )
     latest_benchmark = _benchmark_portfolio(Decimal("450"), created_at=DEMO_CREATED_AT, portfolio_id=benchmark_id)
     managed_history = managed_history.append(
         latest_managed,
         _valuation(
             latest_managed,
-            timestamp=LATEST_AT,
+            timestamp=LATEST_SNAPSHOT_AT,
             provider="demo-provider",
             prices={
                 latest_managed.positions[0].security: Decimal("165"),
@@ -293,7 +322,7 @@ def build_demo_dashboard_data() -> DashboardDemoData:
         latest_benchmark,
         _valuation(
             latest_benchmark.portfolio,
-            timestamp=LATEST_AT,
+            timestamp=LATEST_SNAPSHOT_AT,
             provider="demo-provider",
             prices={latest_benchmark.portfolio.positions[0].security: Decimal("410")},
         ),
@@ -374,12 +403,115 @@ def build_demo_dashboard_data() -> DashboardDemoData:
         comment="Approved for the dashboard demo.",
     )
 
+    buy_research_batch = _demo_research_batch(
+        baseline_managed,
+        batch_id="demo_batch_000",
+        decision_cycle_id=DEMO_BUY_DECISION_CYCLE_ID,
+    )
+    buy_context = ValueManagerDecisionContext(
+        portfolio=baseline_managed,
+        research_batch=buy_research_batch,
+        constitution=constitution,
+    )
+    buy_recommendation = PortfolioRecommendation(
+        action=RecommendationAction.BUY,
+        ticker="MSFT",
+        target_weight=Decimal("0.20"),
+        decision_rationale="Synthetic historical BUY decision for timeline presentation.",
+        investment_thesis="Synthetic enterprise-software thesis.",
+        valuation="Synthetic valuation context from the supplied packet.",
+        risks=("Synthetic capital-investment risk.",),
+        confidence_score=72,
+        evidence=(
+            RecommendationEvidenceReference(
+                evidence_id="demo_ev_003",
+                source_type="FILING",
+                source_title="Microsoft Quarterly Report",
+                source_date=DEMO_CREATED_AT.date(),
+                claim_supported="Microsoft reported enterprise software and cloud operating context.",
+            ),
+        ),
+        why_not_spy="Synthetic candidate-specific evidence is present for this demo entry.",
+        thesis_invalidation=("Synthetic operating assumptions weaken.",),
+        review_triggers=(ReviewTrigger(ReviewTriggerType.EVENT_BASED, "Refresh at the next synthetic update."),),
+    )
+    buy_decision_result = ValueManagerDecisionResult(
+        context=buy_context,
+        recommendation=buy_recommendation,
+        produced_at=BASELINE_AT - timedelta(hours=1),
+    )
+    buy_price = PriceObservation(
+        security=baseline_managed.positions[1].security,
+        observed_price=Decimal("100"),
+        market_date=BASELINE_AT.date(),
+        observed_at=BASELINE_AT - timedelta(minutes=30),
+        currency="USD",
+        source_provider_identity="demo-provider",
+        price_convention="regular-session-close",
+    )
+    buy_validation = DeterministicRiskValidator().validate(
+        buy_decision_result,
+        validation_timestamp=BASELINE_AT - timedelta(minutes=20),
+        price_observation=buy_price,
+    )
+    assert buy_validation.validated_trade is not None
+    fixed_proposal = replace(buy_validation.validated_trade.proposal, trade_proposal_id=DEMO_BUY_PROPOSAL_ID)
+    fixed_validated_trade = replace(
+        buy_validation.validated_trade,
+        proposal=fixed_proposal,
+        validated_trade_id=DEMO_BUY_VALIDATED_TRADE_ID,
+    )
+    buy_validation = replace(buy_validation, validated_trade=fixed_validated_trade)
+    buy_reviewer_context = AIReviewerReviewContext(
+        decision_result=buy_decision_result,
+        risk_validation_result=buy_validation,
+        constitution=constitution,
+    )
+    buy_reviewer_result = ReviewerResult(
+        context=buy_reviewer_context,
+        decision=ReviewDecision.APPROVE,
+        findings=(),
+        reviewed_at=BASELINE_AT - timedelta(minutes=15),
+    )
+    buy_journal_entry = DecisionJournalEntry(
+        decision_result=buy_decision_result,
+        risk_validation_result=buy_validation,
+        journaled_at=BASELINE_AT - timedelta(minutes=10),
+        reviewer_result=buy_reviewer_result,
+    )
+    buy_approval = DecisionApproval(
+        journal_entry=buy_journal_entry,
+        decision_maker_id="demo-human",
+        decision=ApprovalDecision.APPROVED,
+        decided_at=BASELINE_AT - timedelta(minutes=5),
+        comment="Approved historical BUY for the dashboard demo.",
+    )
+    buy_execution = ExecutedTrade(
+        validated_trade=buy_validation.validated_trade,
+        executed_quantity=buy_validation.validated_trade.validated_quantity,
+        execution_price=Decimal("105"),
+        source_provider_identity="demo-provider",
+        market_date=BASELINE_AT.date(),
+        currency="USD",
+        price_convention="regular-session-close",
+        executed_at=BASELINE_AT,
+        executed_trade_id=DEMO_BUY_EXECUTED_TRADE_ID,
+    )
+
     return DashboardDemoData(
         managed_history=managed_history,
         benchmark_history=benchmark_history,
         comparison=PerformanceComparison(managed_history, benchmark_history),
         journal_entry=journal_entry,
         approval=approval,
+        history_entries=(
+            DecisionHistoryArtifacts(
+                journal_entry=buy_journal_entry,
+                approval=buy_approval,
+                executed_trade=buy_execution,
+            ),
+            DecisionHistoryArtifacts(journal_entry=journal_entry, approval=approval),
+        ),
     )
 
 
@@ -391,4 +523,5 @@ def build_demo_dashboard_view() -> DashboardView:
         comparison=data.comparison,
         journal_entry=data.journal_entry,
         approval=data.approval,
+        history_entries=data.history_entries,
     )

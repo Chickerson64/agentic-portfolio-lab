@@ -3,12 +3,17 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, localcontext
+from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
 
 from agentic_portfolio_lab.dashboard import (
     DASHBOARD_TAB_LABELS,
+    DecisionHistoryArtifacts,
+    _newest_first_history_panels,
+    _snapshot_index_for_decision_cycle,
+    _validate_history_snapshot_chronology,
     _allocation_chart_data,
     _format_ticker,
     _metric_delta,
@@ -69,7 +74,186 @@ def test_demo_dashboard_view_has_managed_benchmark_and_comparison_sections() -> 
 
 
 def test_dashboard_uses_streamlit_tabs_for_main_read_only_sections() -> None:
-    assert DASHBOARD_TAB_LABELS == ("Overview", "Holdings", "Performance", "Decision Memo", "Research")
+    assert DASHBOARD_TAB_LABELS == ("Overview", "Holdings", "Performance", "Decision Memo", "Research", "History")
+
+
+def test_history_is_newest_first_while_chart_points_remain_chronological() -> None:
+    view = build_demo_dashboard_view()
+
+    assert view.history is not None
+    assert tuple(entry.action for entry in view.history.entries_newest_first) == ("HOLD", "BUY")
+    assert tuple(point.timestamp for point in view.history.chart_points_oldest_first) == tuple(
+        sorted(point.timestamp for point in view.history.chart_points_oldest_first)
+    )
+
+
+def test_history_displays_hold_buy_execution_and_contribution_states() -> None:
+    data = build_demo_dashboard_data()
+    view = build_dashboard_view(
+        managed_history=data.managed_history,
+        benchmark_history=data.benchmark_history,
+        history_entries=data.history_entries,
+    )
+
+    assert view.history is not None
+    hold_entry, buy_entry = view.history.entries_newest_first
+    source_buy_entry = data.history_entries[0]
+    assert source_buy_entry.executed_trade is not None
+    assert (
+        source_buy_entry.executed_trade.validated_trade
+        is source_buy_entry.journal_entry.risk_validation_result.validated_trade
+    )
+    assert hold_entry.ticker == "n/a"
+    assert hold_entry.execution.status == "No execution — HOLD"
+    assert hold_entry.contributions[0].amount == "USD 200"
+    assert buy_entry.ticker == "MSFT"
+    assert buy_entry.execution.status == "Simulated execution"
+    assert buy_entry.execution.execution_price == "USD 105"
+    assert buy_entry.execution.quantity is not None
+    assert buy_entry.execution.notional is not None
+    assert buy_entry.snapshot is not None
+    assert buy_entry.research_packet_id == "demo_packet_002"
+    assert buy_entry.contributions == ()
+
+
+def test_history_empty_state_and_source_artifacts_remain_immutable() -> None:
+    data = build_demo_dashboard_data()
+    history_before = data.history_entries
+    empty_view = build_dashboard_view(
+        managed_history=data.managed_history,
+        benchmark_history=data.benchmark_history,
+    )
+    populated_view = build_dashboard_view(
+        managed_history=data.managed_history,
+        benchmark_history=data.benchmark_history,
+        history_entries=data.history_entries,
+    )
+
+    assert empty_view.history is not None
+    assert empty_view.history.entries_newest_first == ()
+    assert populated_view.history is not None
+    assert data.history_entries == history_before
+
+
+def test_history_supports_a_single_hold_entry_without_execution() -> None:
+    data = build_demo_dashboard_data()
+    hold_entry = data.history_entries[1]
+    view = build_dashboard_view(
+        managed_history=data.managed_history,
+        benchmark_history=data.benchmark_history,
+        history_entries=(hold_entry,),
+    )
+
+    assert view.history is not None
+    assert len(view.history.entries_newest_first) == 1
+    assert view.history.entries_newest_first[0].action == "HOLD"
+    assert view.history.entries_newest_first[0].execution.status == "No execution — HOLD"
+
+
+def test_history_rejects_execution_with_mismatched_journal_lineage() -> None:
+    data = build_demo_dashboard_data()
+    buy_entry = data.history_entries[0]
+    assert buy_entry.executed_trade is not None
+    mismatched_execution = replace(
+        buy_entry.executed_trade,
+        validated_trade=replace(
+            buy_entry.executed_trade.validated_trade,
+            proposal=replace(
+                buy_entry.executed_trade.validated_trade.proposal,
+                decision_cycle_id=UUID("00000000-0000-0000-0000-000000000099"),
+            ),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="decision_cycle_id"):
+        DecisionHistoryArtifacts(journal_entry=buy_entry.journal_entry, executed_trade=mismatched_execution)
+
+
+def test_history_rejects_execution_from_a_different_validated_trade_with_matching_cycle_and_portfolio() -> None:
+    data = build_demo_dashboard_data()
+    buy_entry = data.history_entries[0]
+    assert buy_entry.executed_trade is not None
+    unrelated_validated_trade = replace(
+        buy_entry.executed_trade.validated_trade,
+        validated_trade_id=UUID("00000000-0000-0000-0000-000000000098"),
+    )
+    unrelated_execution = replace(buy_entry.executed_trade, validated_trade=unrelated_validated_trade)
+
+    with pytest.raises(ValueError, match="authoritative validated_trade"):
+        DecisionHistoryArtifacts(journal_entry=buy_entry.journal_entry, executed_trade=unrelated_execution)
+
+
+def test_history_rejects_mismatched_approval_journal() -> None:
+    data = build_demo_dashboard_data()
+
+    with pytest.raises(ValueError, match="approval must reference"):
+        DecisionHistoryArtifacts(journal_entry=data.history_entries[0].journal_entry, approval=data.approval)
+
+
+def test_history_snapshot_lineage_and_chronology_require_matching_portfolio_cycle_and_boundaries() -> None:
+    data = build_demo_dashboard_data()
+    buy_entry = data.history_entries[0]
+    hold_entry = data.history_entries[1]
+    buy_snapshot = data.managed_history.snapshots[0]
+
+    unrelated_portfolio = replace(buy_snapshot.portfolio, portfolio_id=UUID("00000000-0000-0000-0000-000000000097"))
+    unrelated_valuation = replace(buy_snapshot.valuation, subject_id=unrelated_portfolio.portfolio_id)
+    unrelated_snapshot = replace(buy_snapshot, portfolio=unrelated_portfolio, valuation=unrelated_valuation)
+    unrelated_history = SimpleNamespace(
+        portfolio_id=unrelated_portfolio.portfolio_id,
+        snapshots=(unrelated_snapshot,),
+    )
+    mismatched_snapshot_history = SimpleNamespace(
+        portfolio_id=buy_entry.journal_entry.portfolio_id,
+        snapshots=(unrelated_snapshot,),
+    )
+
+    with pytest.raises(ValueError, match="journal portfolio_id"):
+        _snapshot_index_for_decision_cycle(unrelated_history, journal_entry=buy_entry.journal_entry)
+    with pytest.raises(ValueError, match="snapshot portfolio_id"):
+        _snapshot_index_for_decision_cycle(mismatched_snapshot_history, journal_entry=buy_entry.journal_entry)
+
+    after_snapshot_journal = replace(hold_entry.journal_entry, journaled_at=data.managed_history.snapshots[-1].timestamp + timedelta(seconds=1))
+    with pytest.raises(ValueError, match="must not predate journaled"):
+        _validate_history_snapshot_chronology(
+            data.managed_history.snapshots[-1],
+            journal_entry=after_snapshot_journal,
+            executed_trade=None,
+        )
+    assert buy_entry.executed_trade is not None
+    after_snapshot_execution = replace(buy_entry.executed_trade, executed_at=buy_snapshot.timestamp + timedelta(seconds=1))
+    with pytest.raises(ValueError, match="must not predate execution"):
+        _validate_history_snapshot_chronology(
+            buy_snapshot,
+            journal_entry=buy_entry.journal_entry,
+            executed_trade=after_snapshot_execution,
+        )
+    equality_journal = replace(buy_entry.journal_entry, journaled_at=buy_snapshot.timestamp)
+    equality_execution = replace(buy_entry.executed_trade, executed_at=buy_snapshot.timestamp)
+    _validate_history_snapshot_chronology(
+        buy_snapshot,
+        journal_entry=equality_journal,
+        executed_trade=equality_execution,
+    )
+
+
+def test_history_orders_selector_and_charts_by_datetime_instants_not_display_strings() -> None:
+    view = build_demo_dashboard_view()
+    assert view.history is not None
+    older_by_instant, newer_by_instant = view.history.entries_newest_first
+    earlier_local_date = datetime(2026, 8, 12, 0, tzinfo=timezone(timedelta(hours=14)))
+    later_instant_with_earlier_text = datetime(2026, 8, 11, 23, tzinfo=timezone(timedelta(hours=-10)))
+    panels = (
+        replace(older_by_instant, history_entry_id="a", decision_timestamp_at=earlier_local_date, decision_timestamp="z"),
+        replace(newer_by_instant, history_entry_id="b", decision_timestamp_at=later_instant_with_earlier_text, decision_timestamp="a"),
+    )
+
+    ordered = _newest_first_history_panels(panels)
+
+    assert ordered[0].history_entry_id == "b"
+    assert tuple(point.timestamp_at for point in view.history.chart_points_oldest_first) == tuple(
+        sorted(point.timestamp_at for point in view.history.chart_points_oldest_first)
+    )
 
 
 def test_demo_dashboard_includes_latest_decision_summary() -> None:

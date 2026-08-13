@@ -2,23 +2,30 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime
+from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 from decimal import Context, Decimal, MAX_EMAX, MAX_PREC, MIN_EMIN, ROUND_HALF_UP, localcontext
 from typing import Iterable
+from uuid import UUID
 
 from .domain.approval import DecisionApproval
 from .domain.journal import DecisionJournalEntry
-from .domain.performance import BenchmarkPerformanceHistory, PerformanceComparison, PortfolioPerformanceHistory
+from .domain.performance import (
+    BenchmarkPerformanceHistory,
+    PerformanceComparison,
+    PerformanceSnapshot,
+    PortfolioPerformanceHistory,
+)
 from .domain.portfolio import Portfolio, Position, SecurityIdentity
 from .domain.recommendations import PortfolioRecommendation
 from .domain.research import MissingData, ResearchBatch, ResearchPacket, ResearchSection
 from .domain.risk_validation import RiskRuleResult
 from .domain.reviewer import ReviewFinding
+from .domain.trades import ExecutedTrade
 from .domain.valuation import PortfolioValuation, PositionValuation
 
 _PRESENTATION_DECIMAL_CONTEXT = Context(prec=MAX_PREC, Emax=MAX_EMAX, Emin=MIN_EMIN)
-DASHBOARD_TAB_LABELS = ("Overview", "Holdings", "Performance", "Decision Memo", "Research")
+DASHBOARD_TAB_LABELS = ("Overview", "Holdings", "Performance", "Decision Memo", "Research", "History")
 
 
 def format_decimal(value: Decimal, *, places: int | None = None) -> str:
@@ -214,12 +221,109 @@ class ResearchBatchPanel:
 
 
 @dataclass(frozen=True, slots=True)
+class DecisionHistoryArtifacts:
+    """Read-only source artifacts for one history entry.
+
+    This is a presentation input, not a domain journal or execution record.
+    """
+
+    journal_entry: DecisionJournalEntry
+    approval: DecisionApproval | None = None
+    executed_trade: ExecutedTrade | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.journal_entry, DecisionJournalEntry):
+            raise TypeError("journal_entry must be a DecisionJournalEntry")
+        if self.approval is not None and self.approval.journal_entry is not self.journal_entry:
+            raise ValueError("approval must reference the history entry journal_entry")
+        if self.executed_trade is not None:
+            if not isinstance(self.executed_trade, ExecutedTrade):
+                raise TypeError("executed_trade must be an ExecutedTrade or None")
+            if self.journal_entry.decision_result.recommendation.action.value == "HOLD":
+                raise ValueError("HOLD history entries must not include an executed_trade")
+            if self.executed_trade.decision_cycle_id != self.journal_entry.decision_cycle_id:
+                raise ValueError("executed_trade decision_cycle_id must match history entry")
+            if self.executed_trade.portfolio_id != self.journal_entry.portfolio_id:
+                raise ValueError("executed_trade portfolio_id must match history entry")
+            authoritative_validated_trade = self.journal_entry.risk_validation_result.validated_trade
+            if self.executed_trade.validated_trade is not authoritative_validated_trade:
+                raise ValueError("executed_trade must descend from the journal's authoritative validated_trade")
+
+    @property
+    def history_entry_id(self) -> UUID:
+        """Use the immutable journal decision-cycle identity as the selector key."""
+        return self.journal_entry.decision_cycle_id
+
+
+@dataclass(frozen=True, slots=True)
+class HistoryContributionPanel:
+    timestamp: str
+    amount: str
+    source: str
+
+
+@dataclass(frozen=True, slots=True)
+class HistoryExecutionPanel:
+    status: str
+    execution_price: str | None
+    quantity: str | None
+    notional: str | None
+    executed_at: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class HistorySnapshotPanel:
+    timestamp: str
+    portfolio_value: str
+    cash_value: str
+    positions_value: str
+    managed_return: str
+    benchmark_return: str
+    absolute_alpha: str
+
+
+@dataclass(frozen=True, slots=True)
+class HistoryEntryPanel:
+    history_entry_id: str
+    selector_label: str
+    decision_timestamp_at: datetime
+    decision_timestamp: str
+    action: str
+    ticker: str
+    target_weight: str
+    reviewer_outcome: str
+    approval_outcome: str
+    research_batch_id: str
+    research_packet_id: str | None
+    execution: HistoryExecutionPanel
+    snapshot: HistorySnapshotPanel | None
+    contributions: tuple[HistoryContributionPanel, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class HistoryChartPoint:
+    timestamp_at: datetime
+    timestamp: str
+    portfolio_value: Decimal
+    managed_return: Decimal
+    benchmark_return: Decimal
+    absolute_alpha: Decimal
+
+
+@dataclass(frozen=True, slots=True)
+class HistoryPanel:
+    entries_newest_first: tuple[HistoryEntryPanel, ...]
+    chart_points_oldest_first: tuple[HistoryChartPoint, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class DashboardView:
     managed: PortfolioPanel
     benchmark: BenchmarkPanel
     comparison: ComparisonPanel
     latest_decision: LatestDecisionPanel | None = None
     research: ResearchBatchPanel | None = None
+    history: HistoryPanel | None = None
 
 
 def _format_position_row(
@@ -294,6 +398,11 @@ def _comparison_panel(comparison: PerformanceComparison) -> ComparisonPanel:
 
 def _format_datetime(value: datetime) -> str:
     return value.isoformat(timespec="seconds")
+
+
+def _datetime_instant(value: datetime) -> datetime:
+    """Normalize an aware datetime for absolute chronological ordering."""
+    return value.astimezone(timezone.utc)
 
 
 def _format_ticker(recommendation: PortfolioRecommendation) -> str:
@@ -430,6 +539,205 @@ def _research_batch_panel(
     )
 
 
+def _snapshot_index_for_decision_cycle(
+    history: PortfolioPerformanceHistory,
+    *,
+    journal_entry: DecisionJournalEntry,
+) -> int | None:
+    if journal_entry.portfolio_id != history.portfolio_id:
+        raise ValueError("history entry journal portfolio_id must match managed performance history")
+    matching_indexes = tuple(
+        index
+        for index, snapshot in enumerate(history.snapshots)
+        if snapshot.portfolio.decision_cycle_id == journal_entry.decision_cycle_id
+    )
+    if len(matching_indexes) > 1:
+        raise ValueError("a decision cycle must not match multiple performance snapshots")
+    if not matching_indexes:
+        return None
+    snapshot_index = matching_indexes[0]
+    snapshot = history.snapshots[snapshot_index]
+    _validate_history_snapshot_lineage(snapshot, journal_entry=journal_entry)
+    return snapshot_index
+
+
+def _validate_history_snapshot_lineage(
+    snapshot: PerformanceSnapshot,
+    *,
+    journal_entry: DecisionJournalEntry,
+) -> None:
+    if snapshot.portfolio.portfolio_id != journal_entry.portfolio_id:
+        raise ValueError("matched performance snapshot portfolio_id must match history entry journal")
+    if snapshot.portfolio.decision_cycle_id != journal_entry.decision_cycle_id:
+        raise ValueError("matched performance snapshot decision_cycle_id must match history entry journal")
+
+
+def _validate_history_snapshot_chronology(
+    snapshot: PerformanceSnapshot,
+    *,
+    journal_entry: DecisionJournalEntry,
+    executed_trade: ExecutedTrade | None,
+) -> None:
+    if snapshot.timestamp < journal_entry.journaled_at:
+        raise ValueError("matched performance snapshot must not predate journaled decision state")
+    if executed_trade is not None and snapshot.timestamp < executed_trade.executed_at:
+        raise ValueError("post-execution performance snapshot must not predate execution")
+
+
+def _history_execution_panel(executed_trade: ExecutedTrade | None, *, action: str) -> HistoryExecutionPanel:
+    if executed_trade is None:
+        status = "No execution — HOLD" if action == "HOLD" else "No execution recorded"
+        return HistoryExecutionPanel(status, None, None, None, None)
+    return HistoryExecutionPanel(
+        status="Simulated execution",
+        execution_price=format_currency(executed_trade.execution_price, executed_trade.currency),
+        quantity=format_decimal(executed_trade.executed_quantity),
+        notional=format_currency(executed_trade.executed_notional, executed_trade.currency),
+        executed_at=_format_datetime(executed_trade.executed_at),
+    )
+
+
+def _history_snapshot_panel(
+    managed_snapshot: PerformanceSnapshot,
+    benchmark_snapshot: PerformanceSnapshot,
+    comparison: PerformanceComparison,
+) -> HistorySnapshotPanel:
+    return HistorySnapshotPanel(
+        timestamp=_format_datetime(managed_snapshot.timestamp),
+        portfolio_value=format_currency(managed_snapshot.portfolio_value, managed_snapshot.valuation.currency),
+        cash_value=format_currency(managed_snapshot.cash_value, managed_snapshot.valuation.currency),
+        positions_value=format_currency(managed_snapshot.positions_value, managed_snapshot.valuation.currency),
+        managed_return=format_percent(comparison.managed_cumulative_return),
+        benchmark_return=format_percent(comparison.benchmark_cumulative_return),
+        absolute_alpha=format_percent(comparison.absolute_alpha),
+    )
+
+
+def _history_prefix_comparison(
+    managed_history: PortfolioPerformanceHistory,
+    benchmark_history: BenchmarkPerformanceHistory,
+    *,
+    snapshot_index: int,
+) -> PerformanceComparison:
+    """Reuse the domain comparison for an existing immutable history prefix."""
+    return PerformanceComparison(
+        replace(managed_history, snapshots=managed_history.snapshots[: snapshot_index + 1]),
+        replace(benchmark_history, snapshots=benchmark_history.snapshots[: snapshot_index + 1]),
+    )
+
+
+def _history_entry_panel(
+    artifacts: DecisionHistoryArtifacts,
+    *,
+    managed_history: PortfolioPerformanceHistory,
+    benchmark_history: BenchmarkPerformanceHistory,
+) -> HistoryEntryPanel:
+    journal_entry = artifacts.journal_entry
+    decision_result = journal_entry.decision_result
+    recommendation = decision_result.recommendation
+    snapshot_index = _snapshot_index_for_decision_cycle(
+        managed_history,
+        journal_entry=journal_entry,
+    )
+    snapshot = None
+    contributions: tuple[HistoryContributionPanel, ...] = ()
+    if snapshot_index is not None:
+        managed_snapshot = managed_history.snapshots[snapshot_index]
+        benchmark_snapshot = benchmark_history.snapshots[snapshot_index]
+        _validate_history_snapshot_chronology(
+            managed_snapshot,
+            journal_entry=journal_entry,
+            executed_trade=artifacts.executed_trade,
+        )
+        comparison = _history_prefix_comparison(
+            managed_history,
+            benchmark_history,
+            snapshot_index=snapshot_index,
+        )
+        snapshot = _history_snapshot_panel(managed_snapshot, benchmark_snapshot, comparison)
+        contributions = tuple(
+            HistoryContributionPanel(
+                timestamp=_format_datetime(cash_event.effective_at),
+                amount=format_currency(cash_event.amount, cash_event.currency),
+                source=cash_event.source,
+            )
+            for cash_event in managed_snapshot.cash_events
+        )
+    research_batch = decision_result.context.research_batch
+    matching_packets = tuple(
+        packet for packet in research_batch.packets if packet.ticker == recommendation.ticker
+    )
+    research_packet_id = matching_packets[0].packet_id if len(matching_packets) == 1 else None
+    reviewer_outcome = "Not reviewed" if journal_entry.reviewer_result is None else journal_entry.reviewer_result.decision.value
+    approval_outcome = "No approval recorded" if artifacts.approval is None else artifacts.approval.decision.value
+    ticker = _format_ticker(recommendation)
+    action = recommendation.action.value
+    return HistoryEntryPanel(
+        history_entry_id=str(artifacts.history_entry_id),
+        selector_label=f"{_format_datetime(decision_result.produced_at)} · {action} {ticker}",
+        decision_timestamp_at=decision_result.produced_at,
+        decision_timestamp=_format_datetime(decision_result.produced_at),
+        action=action,
+        ticker=ticker,
+        target_weight=_format_target_weight(recommendation),
+        reviewer_outcome=reviewer_outcome,
+        approval_outcome=approval_outcome,
+        research_batch_id=research_batch.batch_id,
+        research_packet_id=research_packet_id,
+        execution=_history_execution_panel(artifacts.executed_trade, action=action),
+        snapshot=snapshot,
+        contributions=contributions,
+    )
+
+
+def _newest_first_history_panels(entries: tuple[HistoryEntryPanel, ...]) -> tuple[HistoryEntryPanel, ...]:
+    """Order selector rows by their timezone-aware decision instants."""
+    return tuple(
+        sorted(
+            entries,
+            key=lambda entry: (_datetime_instant(entry.decision_timestamp_at), entry.history_entry_id),
+            reverse=True,
+        )
+    )
+
+
+def _history_panel(
+    history_entries: tuple[DecisionHistoryArtifacts, ...] | list[DecisionHistoryArtifacts],
+    *,
+    managed_history: PortfolioPerformanceHistory,
+    benchmark_history: BenchmarkPerformanceHistory,
+) -> HistoryPanel:
+    if not isinstance(history_entries, (tuple, list)):
+        raise TypeError("history_entries must be a tuple or list of DecisionHistoryArtifacts")
+    entries = tuple(history_entries)
+    if not all(isinstance(entry, DecisionHistoryArtifacts) for entry in entries):
+        raise TypeError("history_entries must contain DecisionHistoryArtifacts")
+    entry_ids = tuple(entry.history_entry_id for entry in entries)
+    if len(set(entry_ids)) != len(entry_ids):
+        raise ValueError("history_entries must not contain duplicate journal identities")
+    panels = tuple(
+        _history_entry_panel(entry, managed_history=managed_history, benchmark_history=benchmark_history)
+        for entry in entries
+    )
+    newest_first = _newest_first_history_panels(panels)
+    chart_points = tuple(
+        HistoryChartPoint(
+            timestamp_at=managed_snapshot.timestamp,
+            timestamp=_format_datetime(managed_snapshot.timestamp),
+            portfolio_value=managed_snapshot.portfolio_value,
+            managed_return=comparison.managed_cumulative_return,
+            benchmark_return=comparison.benchmark_cumulative_return,
+            absolute_alpha=comparison.absolute_alpha,
+        )
+        for index, managed_snapshot in sorted(
+            enumerate(managed_history.snapshots),
+            key=lambda item: _datetime_instant(item[1].timestamp),
+        )
+        for comparison in (_history_prefix_comparison(managed_history, benchmark_history, snapshot_index=index),)
+    )
+    return HistoryPanel(entries_newest_first=newest_first, chart_points_oldest_first=chart_points)
+
+
 def _decision_panel(
     *,
     journal_entry: DecisionJournalEntry | None = None,
@@ -497,6 +805,7 @@ def build_dashboard_view(
     journal_entry: DecisionJournalEntry | None = None,
     approval: DecisionApproval | None = None,
     research_batch: ResearchBatch | None = None,
+    history_entries: tuple[DecisionHistoryArtifacts, ...] | list[DecisionHistoryArtifacts] = (),
 ) -> DashboardView:
     """Transform immutable domain objects into a compact dashboard view model."""
     if not managed_history.snapshots:
@@ -529,6 +838,11 @@ def build_dashboard_view(
         research=None
         if authoritative_research_batch is None
         else _research_batch_panel(authoritative_research_batch, journal_entry=journal_source),
+        history=_history_panel(
+            history_entries,
+            managed_history=managed_history,
+            benchmark_history=benchmark_history,
+        ),
     )
 
 
@@ -597,7 +911,7 @@ def render_streamlit_dashboard(view: DashboardView) -> None:
     summary_cols[2].metric("Absolute Alpha", view.comparison.absolute_alpha, delta=alpha_delta, delta_color=alpha_color)
     summary_cols[3].metric("Cash", view.managed.cash_value)
 
-    overview_tab, holdings_tab, performance_tab, decision_tab, research_tab = st.tabs(DASHBOARD_TAB_LABELS)
+    overview_tab, holdings_tab, performance_tab, decision_tab, research_tab, history_tab = st.tabs(DASHBOARD_TAB_LABELS)
 
     with overview_tab:
         st.subheader("Portfolio Overview")
@@ -798,3 +1112,98 @@ def render_streamlit_dashboard(view: DashboardView) -> None:
                 for missing in packet.missing_data:
                     details = f" — {missing.details}" if missing.details is not None else ""
                     st.warning(f"{missing.field_name}: {missing.reason}{details}")
+
+    with history_tab:
+        st.subheader("History")
+        history = view.history
+        if history is None or not history.entries_newest_first:
+            st.write("No decision history is available.")
+        else:
+            entries_by_id = {entry.history_entry_id: entry for entry in history.entries_newest_first}
+            selected_entry_id = st.selectbox(
+                "Decision cycle",
+                options=tuple(entries_by_id),
+                format_func=lambda entry_id: entries_by_id[entry_id].selector_label,
+                key="history_journal_entry_id",
+            )
+            entry = entries_by_id[selected_entry_id]
+
+            st.divider()
+            st.markdown("#### Decision Summary")
+            decision_cols = st.columns(4)
+            decision_cols[0].metric("Action", entry.action, delta_color=_semantic_color(entry.action))
+            decision_cols[1].metric("Ticker", entry.ticker)
+            decision_cols[2].metric("Target Weight", entry.target_weight)
+            decision_cols[3].metric("Decision Time", entry.decision_timestamp)
+            outcome_cols = st.columns(2)
+            outcome_cols[0].metric("Reviewer", entry.reviewer_outcome, delta_color=_semantic_color(entry.reviewer_outcome))
+            outcome_cols[1].metric("Human Approval", entry.approval_outcome, delta_color=_semantic_color(entry.approval_outcome))
+
+            st.divider()
+            st.markdown("#### Portfolio & Performance Snapshot")
+            if entry.snapshot is None:
+                st.write("No performance snapshot is linked to this decision cycle.")
+            else:
+                snapshot_cols = st.columns(4)
+                snapshot_cols[0].metric("Portfolio Value", entry.snapshot.portfolio_value)
+                snapshot_cols[1].metric("Cash", entry.snapshot.cash_value)
+                snapshot_cols[2].metric("Positions Value", entry.snapshot.positions_value)
+                snapshot_cols[3].metric("Snapshot Time", entry.snapshot.timestamp)
+                return_cols = st.columns(3)
+                for column, label, value in zip(
+                    return_cols,
+                    ("Managed Return", "Benchmark Return", "Absolute Alpha"),
+                    (
+                        entry.snapshot.managed_return,
+                        entry.snapshot.benchmark_return,
+                        entry.snapshot.absolute_alpha,
+                    ),
+                    strict=True,
+                ):
+                    delta, delta_color = _metric_delta(value)
+                    column.metric(label, value, delta=delta, delta_color=delta_color)
+
+            st.divider()
+            st.markdown("#### Research Linkage")
+            st.write(f"Research batch: {entry.research_batch_id}")
+            st.write(
+                f"Research packet: {entry.research_packet_id or 'No single packet is selected for this decision'}"
+            )
+            st.caption("See the Research tab for the immutable packet inputs.")
+
+            st.divider()
+            st.markdown("#### Execution")
+            st.metric("Execution Status", entry.execution.status, delta_color=_semantic_color(entry.action))
+            if entry.execution.executed_at is not None:
+                execution_cols = st.columns(4)
+                execution_cols[0].metric("Execution Price", entry.execution.execution_price)
+                execution_cols[1].metric("Quantity", entry.execution.quantity)
+                execution_cols[2].metric("Notional", entry.execution.notional)
+                execution_cols[3].metric("Executed At", entry.execution.executed_at)
+
+            st.divider()
+            st.markdown("#### Contributions")
+            if not entry.contributions:
+                st.write("No CashEvents are linked to this performance snapshot.")
+            else:
+                st.table(
+                    [
+                        {"Timestamp": contribution.timestamp, "Amount": contribution.amount, "Type": contribution.source}
+                        for contribution in entry.contributions
+                    ]
+                )
+
+            st.divider()
+            st.markdown("#### Performance Over Time")
+            value_data = {point.timestamp: point.portfolio_value for point in history.chart_points_oldest_first}
+            return_data = {
+                point.timestamp: {
+                    "Managed Return": point.managed_return,
+                    "Benchmark Return": point.benchmark_return,
+                    "Absolute Alpha": point.absolute_alpha,
+                }
+                for point in history.chart_points_oldest_first
+            }
+            st.caption("Historical snapshots shown oldest to newest.")
+            st.line_chart(value_data)
+            st.line_chart(return_data)
