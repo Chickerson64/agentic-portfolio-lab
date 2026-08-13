@@ -44,6 +44,7 @@ class PositionRow:
     quantity: str
     market_value: str
     portfolio_weight: str
+    allocation_weight: Decimal
     total_cost_basis: str | None = None
     average_cost_basis: str | None = None
     unrealized_pnl: str | None = None
@@ -83,6 +84,9 @@ class LatestDecisionPanel:
     confidence: str
     reviewer_decision: str | None
     human_approval_status: str | None
+    decision_rationale: str
+    investment_thesis: str | None
+    why_not_spy: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +109,7 @@ def _format_position_row(
         quantity=format_decimal(position.quantity),
         market_value=format_currency(market_value, position.security.currency),
         portfolio_weight=format_percent(weight),
+        allocation_weight=weight,
         total_cost_basis=format_currency(position.total_cost_basis, position.security.currency),
         average_cost_basis=format_currency(position.average_cost_basis, position.security.currency),
         unrealized_pnl=format_currency(unrealized_pnl, position.security.currency),
@@ -187,6 +192,9 @@ def _decision_panel(
         confidence=confidence,
         reviewer_decision=reviewer_decision,
         human_approval_status=human_approval_status,
+        decision_rationale=recommendation.decision_rationale,
+        investment_thesis=recommendation.investment_thesis,
+        why_not_spy=recommendation.why_not_spy,
     )
 
 
@@ -237,22 +245,56 @@ def _write_position_rows(rows: Iterable[PositionRow]) -> list[dict[str, str | No
     ]
 
 
+def _display_ticker(decision: LatestDecisionPanel) -> str:
+    """Return an explicit no-security display for a valid HOLD recommendation."""
+    return decision.ticker or "n/a"
+
+
+def _portfolio_heading(panel: PortfolioPanel) -> str:
+    """Keep the human portfolio name, not its technical UUID, in the primary label."""
+    return panel.portfolio_name
+
+
+def _display_reviewer(decision: LatestDecisionPanel) -> str:
+    return decision.reviewer_decision or "Not reviewed"
+
+
+def _metric_delta(value: str) -> tuple[str, str]:
+    """Classify a formatted signed value for Streamlit's presentation color only."""
+    if value.startswith("-"):
+        return "Negative", "inverse"
+    if value.startswith("0"):
+        return "Neutral", "off"
+    return "Positive", "normal"
+
+
 def render_streamlit_dashboard(view: DashboardView) -> None:
     """Render a compact dashboard with lazy Streamlit import."""
     import streamlit as st
 
     st.set_page_config(page_title="Agentic Portfolio Lab", layout="wide")
+    st.markdown(
+        "<style>div[data-testid='stMetric'] {border-left: 3px solid #4f8bf9; padding-left: 0.6rem;}</style>",
+        unsafe_allow_html=True,
+    )
     st.title("Agentic Portfolio Lab — Demo")
-    st.caption("Synthetic demo data · in-memory · non-persisted. Nothing shown here is saved portfolio state.")
+    st.caption("Demo mode — synthetic in-memory data; nothing shown here is persisted.")
 
+    summary_cols = st.columns(4)
+    summary_cols[0].metric("Managed Portfolio Value", view.managed.total_value)
+    summary_cols[1].metric("SPY Benchmark Value", view.benchmark.total_value)
+    alpha_delta, alpha_color = _metric_delta(view.comparison.absolute_alpha)
+    summary_cols[2].metric("Absolute Alpha", view.comparison.absolute_alpha, delta=alpha_delta, delta_color=alpha_color)
+    summary_cols[3].metric("Cash", view.managed.cash_value)
+
+    st.divider()
+    st.subheader("Portfolio Overview")
     left, right = st.columns(2)
     with left:
         st.subheader("Managed Portfolio")
-        st.metric("Portfolio", f"{view.managed.portfolio_name} ({view.managed.portfolio_id})")
-        st.metric("Total Value", view.managed.total_value)
-        st.metric("Cash", view.managed.cash_value)
+        st.metric("Portfolio", _portfolio_heading(view.managed))
+        st.caption(f"Portfolio ID: {view.managed.portfolio_id}")
         st.metric("Invested Value", view.managed.invested_value)
-        st.table(_write_position_rows(view.managed.positions) if view.managed.positions else [{"Ticker": "No positions", "Quantity": "", "Market Value": "", "Weight": "", "Cost Basis": "", "Avg Cost": "", "Unrealized P&L": ""}])
 
     with right:
         st.subheader("Passive Benchmark")
@@ -261,21 +303,41 @@ def render_streamlit_dashboard(view: DashboardView) -> None:
         st.metric("SPY Quantity", view.benchmark.spy_quantity or "0")
         st.metric("SPY Value", view.benchmark.spy_value or "Not held")
 
-    st.subheader("Comparison")
+    st.divider()
+    st.subheader("Holdings")
+    st.table(_write_position_rows(view.managed.positions) if view.managed.positions else [{"Ticker": "No positions", "Quantity": "", "Market Value": "", "Weight": "", "Cost Basis": "", "Avg Cost": "", "Unrealized P&L": ""}])
+    if view.managed.positions:
+        st.caption("Allocation by existing valuation weight")
+        st.bar_chart({row.ticker: row.allocation_weight for row in view.managed.positions})
+
+    st.divider()
+    st.subheader("Performance")
     comparison_cols = st.columns(4)
-    comparison_cols[0].metric("Managed Return", view.comparison.managed_cumulative_return)
-    comparison_cols[1].metric("Benchmark Return", view.comparison.benchmark_cumulative_return)
-    comparison_cols[2].metric("Absolute Alpha", view.comparison.absolute_alpha)
-    comparison_cols[3].metric("Relative Alpha", view.comparison.relative_alpha)
+    for column, label, value in zip(
+        comparison_cols,
+        ("Managed Return", "Benchmark Return", "Absolute Alpha", "Relative Alpha"),
+        (
+            view.comparison.managed_cumulative_return,
+            view.comparison.benchmark_cumulative_return,
+            view.comparison.absolute_alpha,
+            view.comparison.relative_alpha,
+        ),
+        strict=True,
+    ):
+        delta, color = _metric_delta(value)
+        column.metric(label, value, delta=delta, delta_color=color)
 
     if view.latest_decision is not None:
+        st.divider()
         st.subheader("Latest Decision")
-        decision_cols = st.columns(5)
+        decision_cols = st.columns(6)
         decision_cols[0].metric("Action", view.latest_decision.manager_action)
-        decision_cols[1].metric("Ticker", view.latest_decision.ticker or "HOLD")
+        decision_cols[1].metric("Ticker", _display_ticker(view.latest_decision))
         decision_cols[2].metric("Target Weight", view.latest_decision.target_weight or "n/a")
         decision_cols[3].metric("Confidence", view.latest_decision.confidence)
-        decision_cols[4].metric("Reviewer", view.latest_decision.reviewer_decision or "n/a")
-        approval_status = view.latest_decision.human_approval_status
-        if approval_status is not None:
-            st.caption(f"Human approval: {approval_status}")
+        decision_cols[4].metric("Reviewer", _display_reviewer(view.latest_decision))
+        decision_cols[5].metric("Human Approval", view.latest_decision.human_approval_status or "n/a")
+        st.caption(f"Rationale: {view.latest_decision.decision_rationale}")
+        if view.latest_decision.investment_thesis is not None:
+            st.caption(f"Thesis: {view.latest_decision.investment_thesis}")
+        st.caption(f"Why not SPY: {view.latest_decision.why_not_spy}")

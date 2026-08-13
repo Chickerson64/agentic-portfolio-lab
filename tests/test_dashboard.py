@@ -7,7 +7,15 @@ from uuid import uuid4
 
 import pytest
 
-from agentic_portfolio_lab.dashboard import build_dashboard_view, format_decimal, format_percent
+from agentic_portfolio_lab.dashboard import (
+    _display_reviewer,
+    _display_ticker,
+    _metric_delta,
+    _portfolio_heading,
+    build_dashboard_view,
+    format_decimal,
+    format_percent,
+)
 from agentic_portfolio_lab.dashboard_demo import build_demo_dashboard_data, build_demo_dashboard_view
 from agentic_portfolio_lab.domain.performance import BenchmarkPerformanceHistory, PerformanceComparison, PortfolioPerformanceHistory
 from agentic_portfolio_lab.domain.portfolio import CashBalance, Portfolio
@@ -36,6 +44,8 @@ def test_demo_dashboard_view_has_managed_benchmark_and_comparison_sections() -> 
     assert view.benchmark.spy_quantity == "5"
     assert view.comparison.managed_cumulative_return.endswith("%")
     assert view.comparison.absolute_alpha.endswith("%")
+    assert _portfolio_heading(view.managed) == "Managed Value"
+    assert view.managed.portfolio_id not in _portfolio_heading(view.managed)
 
 
 def test_demo_dashboard_includes_latest_decision_summary() -> None:
@@ -44,6 +54,23 @@ def test_demo_dashboard_includes_latest_decision_summary() -> None:
     assert view.latest_decision is not None
     assert view.latest_decision.manager_action == "HOLD"
     assert view.latest_decision.human_approval_status == "APPROVED"
+    assert _display_ticker(view.latest_decision) == "n/a"
+    assert _display_reviewer(view.latest_decision) == "Not reviewed"
+
+
+def test_buy_decision_displays_actual_ticker_and_reviewer_state() -> None:
+    decision = build_demo_dashboard_view().latest_decision
+    assert decision is not None
+    buy = replace(decision, manager_action="BUY", ticker="AAPL", reviewer_decision="APPROVE")
+
+    assert _display_ticker(buy) == "AAPL"
+    assert _display_reviewer(buy) == "APPROVE"
+
+
+def test_signed_performance_values_have_presentation_only_semantic_colors() -> None:
+    assert _metric_delta("4.2%") == ("Positive", "normal")
+    assert _metric_delta("-4.2%") == ("Negative", "inverse")
+    assert _metric_delta("0%") == ("Neutral", "off")
 
 
 def test_demo_dashboard_data_is_deterministic() -> None:
@@ -65,6 +92,7 @@ def test_demo_dashboard_data_is_immutable_from_the_view_layer() -> None:
 
     assert data.managed_history.snapshots == managed_before
     assert data.benchmark_history.snapshots == benchmark_before
+    assert data.managed_history.snapshots[-1].valuation.total_value == Decimal("1120")
 
 
 def test_empty_position_state_renders_without_rows() -> None:
