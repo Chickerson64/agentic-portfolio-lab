@@ -188,12 +188,7 @@ class SQLiteLocalRunStore:
             key=lambda execution: execution.executed_trade.executed_trade_id,
             label="executions",
         )
-        SQLiteLocalRunStore._require_immutable_records(
-            current.history_entries,
-            proposed.history_entries,
-            key=lambda entry: entry.journal_entry.decision_cycle_id,
-            label="history entries",
-        )
+        SQLiteLocalRunStore._require_history_execution_linkage(current.history_entries, proposed.history_entries)
         SQLiteLocalRunStore._require_immutable_records(
             getattr(current, "benchmark_fulfillments", ()),
             getattr(proposed, "benchmark_fulfillments", ()),
@@ -216,6 +211,24 @@ class SQLiteLocalRunStore:
                 raise ValueError(f"{label} must not remove persisted artifact {identity}")
             if replacement != existing:
                 raise ValueError(f"{label} must not rewrite persisted artifact {identity}")
+
+    @staticmethod
+    def _require_history_execution_linkage(current, proposed) -> None:
+        proposed_by_cycle = {entry.journal_entry.decision_cycle_id: entry for entry in proposed}
+        for existing in current:
+            replacement = proposed_by_cycle.get(existing.journal_entry.decision_cycle_id)
+            if replacement is None:
+                raise ValueError("history entries must not remove persisted artifacts")
+            if replacement == existing:
+                continue
+            if (
+                existing.executed_trade is None
+                and replacement.journal_entry is existing.journal_entry
+                and replacement.approval is existing.approval
+                and replacement.executed_trade is not None
+            ):
+                continue
+            raise ValueError("history entries may only append the canonical execution linkage")
 
     def _create_schema(self, connection: sqlite3.Connection) -> None:
         connection.executescript(
@@ -366,10 +379,11 @@ class SQLiteMvpReadState:
         from agentic_portfolio_lab.api.queries import MvpReadStateSnapshot
 
         state = self._state()
+        comparison = None if self._temporarily_unsynchronized(state) else PerformanceComparison(state.managed_history, state.benchmark_history)
         return MvpReadStateSnapshot(
             managed_history=state.managed_history,
             benchmark_history=state.benchmark_history,
-            comparison=PerformanceComparison(state.managed_history, state.benchmark_history),
+            comparison=comparison,
             latest_journal_entry=state.latest_journal_entry,
             latest_approval=state.latest_approval,
             history_entries=state.history_entries,
@@ -378,6 +392,25 @@ class SQLiteMvpReadState:
             benchmark_fulfillments=state.benchmark_fulfillments,
             benchmark_fulfillment_status=getattr(state, "benchmark_fulfillment_status", "PENDING_NO_ELIGIBLE_PRICE"),
         )
+
+    @staticmethod
+    def _temporarily_unsynchronized(state: PersistedRunState) -> bool:
+        managed, benchmark = state.managed_history, state.benchmark_history
+        if len(managed.snapshots) == len(benchmark.snapshots):
+            return False
+        if managed.currency != benchmark.currency:
+            raise ValueError("managed and benchmark histories must share currency")
+        if managed.portfolio_id == benchmark.benchmark_portfolio_id:
+            raise ValueError("managed and benchmark histories must have distinct portfolio identities")
+        if managed.snapshots[0].portfolio.starting_capital != benchmark.snapshots[0].portfolio.starting_capital:
+            raise ValueError("managed and benchmark histories must share starting_capital")
+        for left, right in zip(managed.snapshots, benchmark.snapshots, strict=False):
+            for field in ("as_of_timestamp", "currency", "source_provider_identity", "market_date", "source_price_timestamp", "price_convention"):
+                if getattr(left.valuation, field) != getattr(right.valuation, field):
+                    raise ValueError(f"managed and benchmark snapshots must share valuation {field}")
+            if left.cash_events != right.cash_events:
+                raise ValueError("managed and benchmark snapshots must share the same CashEvent schedule")
+        return True
 
     @property
     def source_metadata(self):

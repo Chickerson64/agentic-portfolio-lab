@@ -320,7 +320,7 @@ class HistoryPanel:
 class DashboardView:
     managed: PortfolioPanel
     benchmark: BenchmarkPanel
-    comparison: ComparisonPanel
+    comparison: ComparisonPanel | None
     latest_decision: LatestDecisionPanel | None = None
     research: ResearchBatchPanel | None = None
     history: HistoryPanel | None = None
@@ -631,6 +631,7 @@ def _history_entry_panel(
     *,
     managed_history: PortfolioPerformanceHistory,
     benchmark_history: BenchmarkPerformanceHistory,
+    comparison_available: bool = True,
 ) -> HistoryEntryPanel:
     journal_entry = artifacts.journal_entry
     decision_result = journal_entry.decision_result
@@ -641,7 +642,7 @@ def _history_entry_panel(
     )
     snapshot = None
     contributions: tuple[HistoryContributionPanel, ...] = ()
-    if snapshot_index is not None:
+    if snapshot_index is not None and comparison_available:
         managed_snapshot = managed_history.snapshots[snapshot_index]
         benchmark_snapshot = benchmark_history.snapshots[snapshot_index]
         _validate_history_snapshot_chronology(
@@ -706,6 +707,7 @@ def _history_panel(
     *,
     managed_history: PortfolioPerformanceHistory,
     benchmark_history: BenchmarkPerformanceHistory,
+    comparison_available: bool = True,
 ) -> HistoryPanel:
     if not isinstance(history_entries, (tuple, list)):
         raise TypeError("history_entries must be a tuple or list of DecisionHistoryArtifacts")
@@ -716,11 +718,11 @@ def _history_panel(
     if len(set(entry_ids)) != len(entry_ids):
         raise ValueError("history_entries must not contain duplicate journal identities")
     panels = tuple(
-        _history_entry_panel(entry, managed_history=managed_history, benchmark_history=benchmark_history)
+        _history_entry_panel(entry, managed_history=managed_history, benchmark_history=benchmark_history, comparison_available=comparison_available)
         for entry in entries
     )
     newest_first = _newest_first_history_panels(panels)
-    chart_points = tuple(
+    chart_points = () if not comparison_available else tuple(
         HistoryChartPoint(
             timestamp_at=managed_snapshot.timestamp,
             timestamp=_format_datetime(managed_snapshot.timestamp),
@@ -814,14 +816,22 @@ def build_dashboard_view(
         raise ValueError("benchmark_history must contain at least one snapshot")
     managed_snapshot = managed_history.snapshots[-1]
     benchmark_snapshot = benchmark_history.snapshots[-1]
-    derived_comparison = PerformanceComparison(managed_history, benchmark_history)
+    if comparison is None:
+        try:
+            derived_comparison = PerformanceComparison(managed_history, benchmark_history)
+        except ValueError as error:
+            if str(error) != "managed and benchmark histories must have equal snapshot counts":
+                raise
+            derived_comparison = None
+    else:
+        derived_comparison = comparison
     if comparison is not None and (
         comparison.managed_history is not managed_history or comparison.benchmark_history is not benchmark_history
     ):
         raise ValueError("comparison histories must match the displayed histories")
     managed_panel = _portfolio_panel(managed_snapshot.portfolio, managed_snapshot.valuation)
     benchmark_panel = _benchmark_panel(benchmark_snapshot.portfolio, benchmark_snapshot.valuation)
-    comparison_panel = _comparison_panel(derived_comparison)
+    comparison_panel = None if derived_comparison is None else _comparison_panel(derived_comparison)
     decision_panel = _decision_panel(journal_entry=journal_entry, approval=approval)
     journal_source = approval.journal_entry if approval is not None else journal_entry
     if journal_source is not None:
@@ -838,11 +848,7 @@ def build_dashboard_view(
         research=None
         if authoritative_research_batch is None
         else _research_batch_panel(authoritative_research_batch, journal_entry=journal_source),
-        history=_history_panel(
-            history_entries,
-            managed_history=managed_history,
-            benchmark_history=benchmark_history,
-        ),
+        history=_history_panel(history_entries, managed_history=managed_history, benchmark_history=benchmark_history, comparison_available=derived_comparison is not None),
     )
 
 

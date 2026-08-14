@@ -16,6 +16,7 @@ from agentic_portfolio_lab.application.wave2_commands import BenchmarkFulfillmen
 from agentic_portfolio_lab.application.decision_commands import DecisionApprovalService, RunValueManagerService
 from agentic_portfolio_lab.domain.openai_value_manager import OpenAIValueManager
 from agentic_portfolio_lab.domain.value_manager import ValueManager
+from agentic_portfolio_lab.application.managed_execution import ManagedPaperExecutionService
 from agentic_portfolio_lab.infrastructure.sqlite_local_state import SQLiteLocalRunStore, SQLiteMvpReadState, SQLitePriceRefreshState, SQLiteResearchBatchState
 from agentic_portfolio_lab.infrastructure.twelve_data import TwelveDataMarketPriceProvider
 
@@ -34,6 +35,7 @@ def create_app(
     value_manager: ValueManager | None = None,
     run_value_manager_service: RunValueManagerService | None = None,
     decision_approval_service: DecisionApprovalService | None = None,
+    managed_execution_service: ManagedPaperExecutionService | None = None,
 ) -> FastAPI:
     """Create the HTTP adapter with explicit, replaceable application state."""
     if state is not None and database_path is not None:
@@ -80,6 +82,8 @@ def create_app(
             or (RunValueManagerService(store, manager=value_manager or OpenAIValueManager()) if store is not None else None),
             decision_approval_service=decision_approval_service
             or (DecisionApprovalService(store) if store is not None else None),
+            managed_execution_service=managed_execution_service
+            or (ManagedPaperExecutionService(store) if store is not None else None),
         )
     )
     return app

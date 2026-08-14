@@ -47,7 +47,7 @@ class MvpReadStateSnapshot:
 
     managed_history: PortfolioPerformanceHistory
     benchmark_history: BenchmarkPerformanceHistory
-    comparison: PerformanceComparison
+    comparison: PerformanceComparison | None
     latest_journal_entry: DecisionJournalEntry | None
     latest_approval: DecisionApproval | None
     history_entries: tuple[DecisionHistoryArtifacts, ...]
@@ -81,7 +81,7 @@ class MvpReadState(Protocol):
 
     managed_history: PortfolioPerformanceHistory
     benchmark_history: BenchmarkPerformanceHistory
-    comparison: PerformanceComparison
+    comparison: PerformanceComparison | None
     latest_journal_entry: DecisionJournalEntry | None
     latest_approval: DecisionApproval | None
     history_entries: tuple[DecisionHistoryArtifacts, ...]
@@ -147,8 +147,8 @@ class MvpQueryService:
             self._state.benchmark_history.benchmark_security,
         )
 
-    def performance(self) -> PerformanceResponse:
-        return performance_response(self._state.comparison)
+    def performance(self) -> PerformanceResponse | None:
+        return None if self._state.comparison is None else performance_response(self._state.comparison)
 
     def _execution_for_journal(self, journal: DecisionJournalEntry):
         for entry in self._state.history_entries:

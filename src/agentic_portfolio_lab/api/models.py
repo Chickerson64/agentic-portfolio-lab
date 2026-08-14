@@ -286,6 +286,21 @@ class PriceRefreshResponse(ApiModel):
     price_convention: str
 
 
+class ExecutePaperTradeResponse(ApiModel):
+    decision_cycle_id: str
+    executed_trade_id: str
+    validated_trade_id: str
+    ticker: str
+    quantity: str
+    notional: str
+    execution_price: str
+    provider_identity: str
+    observed_at: str
+    market_date: str
+    price_convention: str
+    comparison_refreshed: bool
+
+
 class BuildResearchResponse(ApiModel):
     batch_id: str
     decision_cycle_id: str
@@ -333,7 +348,7 @@ class DecisionApprovalCommand(ApiModel):
 class DashboardResponse(ApiModel):
     portfolio: PortfolioSnapshotResponse
     benchmark: BenchmarkSnapshotResponse
-    performance: PerformanceResponse
+    performance: PerformanceResponse | None
     latest_decision: DecisionMemoResponse | None
     research: ResearchBatchResponse | None
     history: HistoryResponse
