@@ -16,6 +16,8 @@ const {
   buildResearch,
   runValueManager,
   recordDecisionOutcome,
+  executePaperTrade,
+  isExecutionEnabled,
 } = await import("./app.js");
 
 const security = (ticker = "MSFT") => ({ ticker, security_type: "EQUITY", exchange: "NASDAQ", currency: "USD" });
@@ -43,12 +45,12 @@ const execution = () => ({
   source_provider_identity: "demo-provider", market_date: "2026-08-11", price_convention: "regular-session-close",
   executed_at: "2026-08-11T12:30:00+00:00", execution_source: "simulated",
 });
-const decision = ({ action = "HOLD", withReviewer = true, withApproval = true, withExecution = false } = {}) => ({
+const decision = ({ action = "HOLD", withReviewer = true, withApproval = true, withExecution = false, readiness = null } = {}) => ({
   decision_cycle_id: "cycle-1", portfolio_id: "portfolio-1", manager_type: "VALUE", constitution_version: "value-v1.0.0",
   research_batch_id: "batch-1", journaled_at: "2026-08-11T12:05:00+00:00", produced_at: "2026-08-11T12:00:00+00:00",
   recommendation: recommendation(action), validation: validation(withExecution ? "validated-1" : null),
   reviewer: withReviewer ? reviewer() : null, approval: withApproval ? approval() : null, execution: withExecution ? execution() : null,
-  execution_readiness: { executable: false, reason_code: action === "HOLD" ? "HOLD" : "NOT_APPROVED", decision_cycle_id: "cycle-1", action, security: action === "BUY" ? security() : null, approval_status: withApproval ? "APPROVED" : null, validation_status: "PASSED" },
+  execution_readiness: readiness ?? { executable: false, reason_code: action === "HOLD" ? "HOLD" : "NOT_APPROVED", decision_cycle_id: "cycle-1", action, security: action === "BUY" ? security() : null, approval_status: withApproval ? "APPROVED" : null, validation_status: "PASSED" },
 });
 const research = () => ({
   batch_id: "batch-1", decision_cycle_id: "cycle-1", portfolio_id: "portfolio-1", manager_type: "VALUE",
@@ -91,6 +93,12 @@ assert.equal(buyView.execution.executedTradeId, "executed-1");
 assert.equal(buyView.execution.validatedTradeId, "validated-1");
 assert.equal(buyView.execution.security.ticker, "MSFT");
 assert.equal(buyView.executionReadiness.security.ticker, "MSFT");
+
+for (const reasonCode of ["HOLD", "NOT_APPROVED", "REJECTED", "VALIDATION_FAILED", "ALREADY_EXECUTED"]) {
+  assert.equal(isExecutionEnabled(normalizeDecision(decision({ action: reasonCode === "HOLD" ? "HOLD" : "BUY", readiness: { executable: false, reason_code: reasonCode, decision_cycle_id: "cycle-1", action: reasonCode === "HOLD" ? "HOLD" : "BUY", security: reasonCode === "HOLD" ? null : security(), approval_status: null, validation_status: "PASSED" } }))), false);
+}
+const readyDecision = normalizeDecision(decision({ action: "BUY", readiness: { executable: true, reason_code: "READY", decision_cycle_id: "cycle-1", action: "BUY", security: security(), approval_status: "APPROVED", validation_status: "PASSED" } }));
+assert.equal(isExecutionEnabled(readyDecision), true);
 
 const researchView = normalizeResearch(research());
 assert.equal(researchView.packets[0].candidateId, "candidate-1");
@@ -195,6 +203,32 @@ globalThis.fetch = async () => ({ ok: false, status: 422, json: async () => ({ d
 await recordDecisionOutcome({ decision: normalizeDecision(decision({ action: "BUY", withApproval: false })), decisionName: "approve", button: failedOutcomeButton, status: failedOutcomeStatus, reload: async () => { throw new Error("must not reload"); }, decisionMakerId: "operator-1", decidedAt: "2026-08-13T20:05", comment: null, confirmDecision: () => true });
 assert.equal(failedOutcomeButton.disabled, false); assert.equal(failedOutcomeButton.textContent, "Approve"); assert.match(failedOutcomeStatus.textContent, /Decision approve failed: validation failed/);
 
+const executionButton = { disabled: false, textContent: "Execute Paper Trade" }, executionStatus = { textContent: "" }, pendingExecution = deferred();
+let executionReloads = 0, executionConfirmations = 0, executionRequest;
+globalThis.fetch = async (url, options) => { executionRequest = { url, options }; return pendingExecution.promise; };
+const executing = executePaperTrade({ decision: readyDecision, button: executionButton, status: executionStatus, reload: async () => { executionReloads += 1; }, executedAt: "2026-08-13T20:10", confirmExecution: () => { executionConfirmations += 1; return true; } });
+assert.equal(executionConfirmations, 1);
+assert.equal(executionButton.disabled, true);
+assert.equal(executionButton.textContent, "Executing Paper Trade…");
+assert.match(executionStatus.textContent, /deterministic backend/);
+pendingExecution.resolve({ ok: true, json: async () => ({ decision_cycle_id: "cycle-1" }) });
+await executing;
+const executionUrl = new URL(executionRequest.url);
+assert.equal(executionUrl.pathname, "/commands/decisions/cycle-1/execute-paper-trade");
+assert.equal(executionUrl.searchParams.get("executed_at"), new Date("2026-08-13T20:10").toISOString());
+assert.equal(executionRequest.options.method, "POST");
+assert.equal("body" in executionRequest.options, false);
+assert.equal(executionReloads, 1);
+assert.equal(executionButton.disabled, false);
+assert.equal(executionButton.textContent, "Execute Paper Trade");
+
+const failedExecutionButton = { disabled: false, textContent: "Execute Paper Trade" }, failedExecutionStatus = { textContent: "" };
+globalThis.fetch = async () => ({ ok: false, status: 422, json: async () => ({ detail: { message: "no eligible persisted PriceObservation exists for execution" } }) });
+await executePaperTrade({ decision: readyDecision, button: failedExecutionButton, status: failedExecutionStatus, reload: async () => { throw new Error("must not reload"); }, executedAt: "2026-08-13T20:10", confirmExecution: () => true });
+assert.equal(failedExecutionButton.disabled, false);
+assert.equal(failedExecutionButton.textContent, "Execute Paper Trade");
+assert.match(failedExecutionStatus.textContent, /Paper execution failed: no eligible persisted PriceObservation/);
+
 const originalFetch = globalThis.fetch;
 globalThis.fetch = async (url) => {
   const path = new URL(url).pathname;
@@ -203,6 +237,8 @@ globalThis.fetch = async (url) => {
     "/health": { status: "ok", state_mode: "synthetic-in-memory", persisted: false, synthetic: true },
     "/dashboard": dashboard(),
     "/decisions": { entries_newest_first: [], chart_points_oldest_first: [] },
+    "/portfolio": portfolio(),
+    "/performance": dashboard().performance,
   };
   return { status: 200, ok: true, json: async () => payloads[path] };
 };

@@ -223,9 +223,16 @@ class SQLiteLocalRunStore:
                 continue
             if (
                 existing.executed_trade is None
-                and replacement.journal_entry is existing.journal_entry
-                and replacement.approval is existing.approval
+                # SQLite decode creates a fresh immutable object graph for the
+                # authoritative current state.  Equality plus the immutable
+                # journal/approval transition checks above is therefore the
+                # durable equivalent of in-memory reference linkage.
+                and replacement.journal_entry == existing.journal_entry
+                and replacement.approval == existing.approval
                 and replacement.executed_trade is not None
+                and existing.journal_entry.risk_validation_result.validated_trade is not None
+                and replacement.executed_trade.validated_trade_id
+                == existing.journal_entry.risk_validation_result.validated_trade.validated_trade_id
             ):
                 continue
             raise ValueError("history entries may only append the canonical execution linkage")

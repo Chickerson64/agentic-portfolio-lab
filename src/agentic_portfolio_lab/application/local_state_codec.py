@@ -7,7 +7,7 @@ and field values are represented with JSON-safe primitives.
 
 from __future__ import annotations
 
-from dataclasses import fields, is_dataclass
+from dataclasses import fields, is_dataclass, replace
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
@@ -140,9 +140,51 @@ def decode_run_state(value: Any) -> PersistedRunState:
         raise ValueError("persisted document is not a local run state")
     from agentic_portfolio_lab.dashboard import DecisionHistoryArtifacts
     from agentic_portfolio_lab.domain.approval import DecisionApproval
+    from agentic_portfolio_lab.domain.journal import DecisionJournalEntry
+    from agentic_portfolio_lab.domain.reviewer import AIReviewerReviewContext, ReviewerResult
     from agentic_portfolio_lab.domain.simulated_execution import SimulatedExecutionResult
+    from agentic_portfolio_lab.domain.value_manager import ValueManagerDecisionContext
+    from agentic_portfolio_lab.domain.value_manager_workflow import ValueManagerDecisionResult
 
-    journals = {journal.decision_cycle_id: journal for journal in state.journal_entries}
+    batches = {batch.batch_id: batch for batch in state.research_batches}
+    canonical_journals = []
+    for journal in state.journal_entries:
+        raw_context = journal.decision_result.context
+        research_batch = batches.get(raw_context.research_batch.batch_id)
+        if research_batch is None:
+            raise ValueError("persisted journal is missing its canonical ResearchBatch")
+        context = ValueManagerDecisionContext(
+            portfolio=raw_context.portfolio,
+            research_batch=research_batch,
+            constitution=raw_context.constitution,
+            prior_reviewer_feedback=raw_context.prior_reviewer_feedback,
+        )
+        decision_result = ValueManagerDecisionResult(
+            context=context,
+            recommendation=journal.decision_result.recommendation,
+            produced_at=journal.decision_result.produced_at,
+        )
+        validation = replace(journal.risk_validation_result, decision_result=decision_result)
+        reviewer = journal.reviewer_result
+        if reviewer is not None:
+            reviewer_context = AIReviewerReviewContext(
+                decision_result=decision_result,
+                risk_validation_result=validation,
+                constitution=reviewer.context.constitution,
+            )
+            reviewer = ReviewerResult(
+                context=reviewer_context,
+                decision=reviewer.decision,
+                findings=reviewer.findings,
+                reviewed_at=reviewer.reviewed_at,
+            )
+        canonical_journals.append(DecisionJournalEntry(
+            decision_result=decision_result,
+            risk_validation_result=validation,
+            journaled_at=journal.journaled_at,
+            reviewer_result=reviewer,
+        ))
+    journals = {journal.decision_cycle_id: journal for journal in canonical_journals}
     approvals = tuple(
         DecisionApproval(
             journal_entry=journals[approval.decision_cycle_id],
@@ -207,7 +249,7 @@ def decode_run_state(value: Any) -> PersistedRunState:
         funding_results=state.funding_results,
         price_observations=observations,
         research_batches=state.research_batches,
-        journal_entries=state.journal_entries,
+        journal_entries=tuple(canonical_journals),
         approvals=approvals,
         executions=executions,
         history_entries=history_entries,
