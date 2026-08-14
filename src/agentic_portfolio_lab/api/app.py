@@ -13,6 +13,9 @@ from agentic_portfolio_lab.application.refresh_prices import InMemoryPriceRefres
 from agentic_portfolio_lab.application.build_research import BuildResearchService
 from agentic_portfolio_lab.infrastructure.alpha_vantage import AlphaVantageResearchProvider
 from agentic_portfolio_lab.application.wave2_commands import BenchmarkFulfillmentService, CashEventService
+from agentic_portfolio_lab.application.decision_commands import DecisionApprovalService, RunValueManagerService
+from agentic_portfolio_lab.domain.openai_value_manager import OpenAIValueManager
+from agentic_portfolio_lab.domain.value_manager import ValueManager
 from agentic_portfolio_lab.infrastructure.sqlite_local_state import SQLiteLocalRunStore, SQLiteMvpReadState, SQLitePriceRefreshState, SQLiteResearchBatchState
 from agentic_portfolio_lab.infrastructure.twelve_data import TwelveDataMarketPriceProvider
 
@@ -28,6 +31,9 @@ def create_app(
     research_service: BuildResearchService | None = None,
     cash_event_service: CashEventService | None = None,
     benchmark_fulfillment_service: BenchmarkFulfillmentService | None = None,
+    value_manager: ValueManager | None = None,
+    run_value_manager_service: RunValueManagerService | None = None,
+    decision_approval_service: DecisionApprovalService | None = None,
 ) -> FastAPI:
     """Create the HTTP adapter with explicit, replaceable application state."""
     if state is not None and database_path is not None:
@@ -70,6 +76,10 @@ def create_app(
             cash_event_service=cash_event_service or (CashEventService(store) if store is not None else None),
             benchmark_fulfillment_service=benchmark_fulfillment_service
             or (BenchmarkFulfillmentService(store) if store is not None else None),
+            run_value_manager_service=run_value_manager_service
+            or (RunValueManagerService(store, manager=value_manager or OpenAIValueManager()) if store is not None else None),
+            decision_approval_service=decision_approval_service
+            or (DecisionApprovalService(store) if store is not None else None),
         )
     )
     return app

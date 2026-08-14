@@ -14,6 +14,8 @@ const {
   normalizeBuildResearch,
   refreshPrices,
   buildResearch,
+  runValueManager,
+  recordDecisionOutcome,
 } = await import("./app.js");
 
 const security = (ticker = "MSFT") => ({ ticker, security_type: "EQUITY", exchange: "NASDAQ", currency: "USD" });
@@ -46,6 +48,7 @@ const decision = ({ action = "HOLD", withReviewer = true, withApproval = true, w
   research_batch_id: "batch-1", journaled_at: "2026-08-11T12:05:00+00:00", produced_at: "2026-08-11T12:00:00+00:00",
   recommendation: recommendation(action), validation: validation(withExecution ? "validated-1" : null),
   reviewer: withReviewer ? reviewer() : null, approval: withApproval ? approval() : null, execution: withExecution ? execution() : null,
+  execution_readiness: { executable: false, reason_code: action === "HOLD" ? "HOLD" : "NOT_APPROVED", decision_cycle_id: "cycle-1", action, security: action === "BUY" ? security() : null, approval_status: withApproval ? "APPROVED" : null, validation_status: "PASSED" },
 });
 const research = () => ({
   batch_id: "batch-1", decision_cycle_id: "cycle-1", portfolio_id: "portfolio-1", manager_type: "VALUE",
@@ -79,6 +82,7 @@ assert.equal(holdView.recommendation.ticker, null);
 assert.equal(holdView.reviewer, null);
 assert.equal(holdView.approval, null);
 assert.equal(holdView.execution, null);
+assert.equal(holdView.executionReadiness.reasonCode, "HOLD");
 assert.equal(normalizeDecision(null), null);
 
 const buyView = normalizeDecision(decision({ action: "BUY", withExecution: true }));
@@ -86,6 +90,7 @@ assert.equal(buyView.recommendation.targetWeight, "0.25");
 assert.equal(buyView.execution.executedTradeId, "executed-1");
 assert.equal(buyView.execution.validatedTradeId, "validated-1");
 assert.equal(buyView.execution.security.ticker, "MSFT");
+assert.equal(buyView.executionReadiness.security.ticker, "MSFT");
 
 const researchView = normalizeResearch(research());
 assert.equal(researchView.packets[0].candidateId, "candidate-1");
@@ -159,6 +164,36 @@ assert.equal(buildReloads, 1); assert.equal(buildButton.disabled, false); assert
 globalThis.fetch = async () => ({ ok:false, status:502, json:async()=>({detail:{message:"source failed"}}) });
 await buildResearch({ button: buildButton, status: buildStatus, reload: async () => { throw new Error("must not reload"); } });
 assert.equal(buildButton.disabled, false); assert.equal(buildStatus.textContent, "Research build failed: source failed");
+
+const runButton = { disabled: false, textContent: "Run Value Manager" }, runStatus = { textContent: "" };
+let runReloads = 0;
+globalThis.fetch = async (url, options) => {
+  assert.equal(new URL(url).pathname, "/commands/run-value-manager");
+  assert.equal(options.method, "POST");
+  assert.deepEqual(JSON.parse(options.body), { occurred_at: new Date("2026-08-13T20:00").toISOString() });
+  return { ok: true, json: async () => decision({ action: "BUY", withApproval: false }) };
+};
+await runValueManager({ button: runButton, status: runStatus, reload: async () => { runReloads += 1; }, occurredAt: "2026-08-13T20:00" });
+assert.equal(runReloads, 1); assert.equal(runButton.disabled, false); assert.match(runStatus.textContent, /Requesting a structured/);
+
+for (const decisionName of ["approve", "reject"]) {
+  const outcomeButton = { disabled: false, textContent: decisionName === "approve" ? "Approve" : "Reject" };
+  const outcomeStatus = { textContent: "" };
+  let reloaded = 0, confirmed = 0;
+  globalThis.fetch = async (url, options) => {
+    assert.equal(new URL(url).pathname, `/commands/decisions/cycle-1/${decisionName}`);
+    assert.equal(options.method, "POST");
+    assert.deepEqual(JSON.parse(options.body), { decision_maker_id: "operator-1", decided_at: new Date("2026-08-13T20:05").toISOString(), comment: "audit note" });
+    return { ok: true, json: async () => decision({ action: "BUY", withApproval: false }) };
+  };
+  await recordDecisionOutcome({ decision: normalizeDecision(decision({ action: "BUY", withApproval: false })), decisionName, button: outcomeButton, status: outcomeStatus, reload: async () => { reloaded += 1; }, decisionMakerId: "operator-1", decidedAt: "2026-08-13T20:05", comment: "audit note", confirmDecision: () => { confirmed += 1; return true; } });
+  assert.equal(confirmed, 1); assert.equal(reloaded, 1); assert.equal(outcomeButton.disabled, false);
+  assert.equal(outcomeButton.textContent, decisionName === "approve" ? "Approve" : "Reject");
+}
+const failedOutcomeButton = { disabled: false, textContent: "Approve" }, failedOutcomeStatus = { textContent: "" };
+globalThis.fetch = async () => ({ ok: false, status: 422, json: async () => ({ detail: { message: "validation failed" } }) });
+await recordDecisionOutcome({ decision: normalizeDecision(decision({ action: "BUY", withApproval: false })), decisionName: "approve", button: failedOutcomeButton, status: failedOutcomeStatus, reload: async () => { throw new Error("must not reload"); }, decisionMakerId: "operator-1", decidedAt: "2026-08-13T20:05", comment: null, confirmDecision: () => true });
+assert.equal(failedOutcomeButton.disabled, false); assert.equal(failedOutcomeButton.textContent, "Approve"); assert.match(failedOutcomeStatus.textContent, /Decision approve failed: validation failed/);
 
 const originalFetch = globalThis.fetch;
 globalThis.fetch = async (url) => {

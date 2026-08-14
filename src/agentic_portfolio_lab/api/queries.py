@@ -12,6 +12,7 @@ from agentic_portfolio_lab.domain.journal import DecisionJournalEntry
 from agentic_portfolio_lab.domain.performance import BenchmarkPerformanceHistory, PerformanceComparison, PortfolioPerformanceHistory
 from agentic_portfolio_lab.domain.portfolio import SecurityIdentity
 from agentic_portfolio_lab.domain.benchmark_fulfillment import PassiveIndexFulfillment
+from agentic_portfolio_lab.application.research_selection import latest_authoritative_research_batch
 
 from .models import (
     BenchmarkSnapshotResponse,
@@ -177,7 +178,7 @@ class MvpQueryService:
     def research_latest(self) -> ResearchBatchResponse:
         persisted_batches = getattr(self._state, "research_batches", ())
         if persisted_batches:
-            return research_batch_response(persisted_batches[-1])
+            return research_batch_response(latest_authoritative_research_batch(persisted_batches))
         journal, _ = self._latest_journal_and_approval()
         return research_batch_response(journal.decision_result.context.research_batch)
 

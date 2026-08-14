@@ -204,6 +204,20 @@ function normalizeExecution(payload, context) {
   };
 }
 
+function normalizeExecutionReadiness(payload, context) {
+  const value = record(payload, context);
+  const securityPayload = nullableRecord(field(value, "security", context), `${context}.security`);
+  return {
+    executable: boolean(field(value, "executable", context), `${context}.executable`),
+    reasonCode: text(field(value, "reason_code", context), `${context}.reason_code`),
+    decisionCycleId: text(field(value, "decision_cycle_id", context), `${context}.decision_cycle_id`),
+    action: text(field(value, "action", context), `${context}.action`),
+    security: securityPayload === null ? null : normalizeSecurity(securityPayload, `${context}.security`),
+    approvalStatus: nullableText(field(value, "approval_status", context), `${context}.approval_status`),
+    validationStatus: text(field(value, "validation_status", context), `${context}.validation_status`),
+  };
+}
+
 export function normalizeDecision(payload) {
   if (payload === null) return null;
   const context = "decision";
@@ -221,6 +235,7 @@ export function normalizeDecision(payload) {
     reviewer: normalizeReviewer(field(payload, "reviewer", context), `${context}.reviewer`),
     approval: normalizeApproval(field(payload, "approval", context), `${context}.approval`),
     execution: normalizeExecution(field(payload, "execution", context), `${context}.execution`),
+    executionReadiness: normalizeExecutionReadiness(field(payload, "execution_readiness", context), `${context}.execution_readiness`),
   };
 }
 
@@ -398,10 +413,27 @@ function renderOverview(state) {
 }
 function renderDecision(state) {
   const target = document.querySelector("#decision"); const decision = state.decision;
-  if (!decision) { target.innerHTML = empty("No latest decision", "The API reports no latest decision. No recommendation is being inferred."); return; }
+  if (!decision) {
+    const control = state.health.persisted
+      ? `<article class="surface command-form"><span class="kicker">Value Manager</span><h2>Run Value Manager</h2><input id="value-manager-occurred-at" type="datetime-local" aria-label="Decision timestamp" required><button class="refresh-button" id="run-value-manager" type="button">Run Value Manager</button></article>`
+      : "";
+    target.innerHTML = `${empty("No latest decision", "The API reports no latest decision. No recommendation is being inferred.")}${control}`;
+    document.querySelector("#run-value-manager")?.addEventListener("click", () => runValueManager());
+    return;
+  }
   const r = decision.recommendation, execution = decision.execution, reviewer = decision.reviewer, approval = decision.approval;
   const lifecycle = [["Manager decided", `${r.action} · ${r.confidenceScore}/100`, decision.producedAt], ["Code validated", decision.validation.status, decision.validation.validationTimestamp], ["Reviewer", reviewer ? reviewer.decision : "Not reviewed", reviewer?.reviewedAt], ["Human approval", approval ? approval.decision : "Not approved", approval?.decidedAt], ["Execution", execution ? `${execution.action} ${execution.security.ticker}` : r.action === "HOLD" ? "No execution — HOLD" : "No execution", execution?.executedAt]].map(([name, status, time]) => `<div><span class="kicker">${esc(name)}</span><strong>${esc(status)}</strong><small>${esc(dateTime(time))}</small></div>`).join("");
-  target.innerHTML = `<div class="page-heading"><div><span class="kicker">Decision center</span><h1>Verified decision lifecycle</h1><p>Recommendation, deterministic validation, review, and approval are separate artifacts.</p></div><div class="cycle-id"><span class="kicker">Decision cycle</span><strong>${esc(decision.decisionCycleId)}</strong><small>${esc(decision.constitutionVersion)}</small></div></div><article class="decision-hero"><div class="decision-main"><div class="recommendation-top"><i class="symbol">${esc(initials(r.ticker))}</i><div><span class="kicker">Latest manager recommendation</span><h2>${esc(r.action)} ${esc(r.ticker)}</h2><p>${esc(r.valuation)}</p></div><span class="chip ${r.action === "BUY" ? "buy" : "hold"}">${esc(r.action)}</span></div><p class="thesis">${esc(r.decisionRationale)}</p><div class="facts"><div><span>Target weight</span><strong>${esc(percent(r.targetWeight))}</strong></div><div><span>Confidence</span><strong>${esc(r.confidenceScore)}/100</strong></div><div><span>Execution</span><strong>${esc(execution ? `${execution.executedQuantity} shares` : "None")}</strong></div></div><section class="section-card"><span class="kicker">Why not SPY</span><p>${esc(r.whyNotSpy)}</p></section></div><aside class="confidence"><span class="kicker">Evidence confidence</span><strong class="value">${esc(r.confidenceScore)}</strong><p>${esc(r.evidence.length)} cited evidence item(s)</p><p class="muted">${esc(reviewer ? `${reviewer.findings.length} reviewer finding(s)` : "Reviewer absent")}</p></aside></article><section class="lifecycle"><div class="surface-head"><div><span class="kicker">Verified lifecycle</span><h2>How this became portfolio state</h2></div></div><div class="lifecycle-grid">${lifecycle}</div></section><div class="two-col"><article class="surface"><span class="kicker">Thesis and risks</span><h2>Decision memo</h2><p class="thesis">${esc(r.investmentThesis ?? "No investment thesis — HOLD")}</p><h3>Risks</h3><ul>${r.risks.map((risk) => `<li>${esc(risk)}</li>`).join("")}</ul></article><article class="surface"><span class="kicker">Execution lineage</span><h2>${execution ? "Simulated execution" : "No execution"}</h2>${execution ? `<p>${esc(execution.action)} ${esc(execution.executedQuantity)} ${esc(execution.security.ticker)} @ ${esc(money(execution.executionPrice, execution.currency))}</p><small class="muted">Executed trade ${esc(execution.executedTradeId)} · validated trade ${esc(execution.validatedTradeId)}</small>` : `<p class="muted">${r.action === "HOLD" ? "HOLD correctly produced no execution." : "No execution artifact is available."}</p>`}</article></div>`;
+  const runControl = state.health.persisted && state.research?.decisionCycleId !== decision.decisionCycleId
+    ? `<article class="surface command-form"><span class="kicker">New authoritative research</span><h2>Run Value Manager</h2><input id="value-manager-occurred-at" type="datetime-local" aria-label="Decision timestamp" required><button class="refresh-button" id="run-value-manager" type="button">Run Value Manager</button></article>`
+    : "";
+  const outcomeControls = state.health.persisted && !approval
+    ? `<article class="surface command-form"><span class="kicker">Human decision</span><h2>Approval gate</h2><p class="muted">Validation: ${esc(decision.validation.status)} · readiness: ${esc(decision.executionReadiness.reasonCode)}</p><input id="decision-maker-id" value="local-operator" aria-label="Decision maker ID" required><input id="decision-decided-at" type="datetime-local" aria-label="Decision timestamp" required><input id="decision-comment" aria-label="Decision comment (optional)" placeholder="Optional audit comment"><div><button class="refresh-button" id="approve-decision" type="button">Approve</button><button class="quiet-button" id="reject-decision" type="button">Reject</button></div></article>`
+    : `<article class="surface"><span class="kicker">Execution readiness</span><h2>${esc(decision.executionReadiness.reasonCode)}</h2><p class="muted">Approval: ${esc(decision.executionReadiness.approvalStatus ?? "Not recorded")} · Validation: ${esc(decision.executionReadiness.validationStatus)}</p></article>`;
+  target.innerHTML = `<div class="page-heading"><div><span class="kicker">Decision center</span><h1>Verified decision lifecycle</h1><p>Recommendation, deterministic validation, review, and approval are separate artifacts.</p></div><div class="cycle-id"><span class="kicker">Decision cycle</span><strong>${esc(decision.decisionCycleId)}</strong><small>${esc(decision.constitutionVersion)}</small></div></div><article class="decision-hero"><div class="decision-main"><div class="recommendation-top"><i class="symbol">${esc(initials(r.ticker))}</i><div><span class="kicker">Latest manager recommendation</span><h2>${esc(r.action)} ${esc(r.ticker)}</h2><p>${esc(r.valuation)}</p></div><span class="chip ${r.action === "BUY" ? "buy" : "hold"}">${esc(r.action)}</span></div><p class="thesis">${esc(r.decisionRationale)}</p><div class="facts"><div><span>Target weight</span><strong>${esc(percent(r.targetWeight))}</strong></div><div><span>Confidence</span><strong>${esc(r.confidenceScore)}/100</strong></div><div><span>Execution</span><strong>${esc(execution ? `${execution.executedQuantity} shares` : "None")}</strong></div></div><section class="section-card"><span class="kicker">Why not SPY</span><p>${esc(r.whyNotSpy)}</p></section></div><aside class="confidence"><span class="kicker">Evidence confidence</span><strong class="value">${esc(r.confidenceScore)}</strong><p>${esc(r.evidence.length)} cited evidence item(s)</p><p class="muted">${esc(reviewer ? `${reviewer.findings.length} reviewer finding(s)` : "Reviewer absent")}</p></aside></article><section class="lifecycle"><div class="surface-head"><div><span class="kicker">Verified lifecycle</span><h2>How this became portfolio state</h2></div></div><div class="lifecycle-grid">${lifecycle}</div></section><div class="two-col"><article class="surface"><span class="kicker">Thesis and risks</span><h2>Decision memo</h2><p class="thesis">${esc(r.investmentThesis ?? "No investment thesis — HOLD")}</p><h3>Risks</h3><ul>${r.risks.map((risk) => `<li>${esc(risk)}</li>`).join("")}</ul></article><article class="surface"><span class="kicker">Execution lineage</span><h2>${execution ? "Simulated execution" : "No execution"}</h2>${execution ? `<p>${esc(execution.action)} ${esc(execution.executedQuantity)} ${esc(execution.security.ticker)} @ ${esc(money(execution.executionPrice, execution.currency))}</p><small class="muted">Executed trade ${esc(execution.executedTradeId)} · validated trade ${esc(execution.validatedTradeId)}</small>` : `<p class="muted">${r.action === "HOLD" ? "HOLD correctly produced no execution." : "No execution artifact is available."}</p>`}</article></div>${runControl}${outcomeControls}`;
+  document.querySelector("#run-value-manager")?.addEventListener("click", () => runValueManager());
+  const outcome = (decisionName) => recordDecisionOutcome({ decision, decisionName });
+  document.querySelector("#approve-decision")?.addEventListener("click", () => outcome("approve"));
+  document.querySelector("#reject-decision")?.addEventListener("click", () => outcome("reject"));
 }
 function renderResearch(state) {
   const target = document.querySelector("#research"), research = state.research;
@@ -454,5 +486,30 @@ export async function buildResearch({ button = document.querySelector("#build-re
     status.textContent = refreshStatus; await reload();
   } catch (error) { refreshStatus = `Research build failed: ${error.message}`; status.textContent = refreshStatus; }
   finally { button.disabled = false; button.textContent = "Build research"; }
+}
+
+export async function runValueManager({ button = document.querySelector("#run-value-manager"), status = document.querySelector("#health-status"), reload = start, occurredAt = document.querySelector("#value-manager-occurred-at")?.value } = {}) {
+  if (!occurredAt) { status.textContent = "Run Value Manager requires a caller-supplied timestamp."; return; }
+  button.disabled = true; button.textContent = "Running Value Manager…"; status.textContent = "Requesting a structured Value Manager recommendation…";
+  try {
+    await apiClient.post("/commands/run-value-manager", { occurred_at: new Date(occurredAt).toISOString() });
+    refreshStatus = "Value Manager decision journaled."; await reload();
+  } catch (error) { refreshStatus = `Value Manager failed: ${error.message}`; status.textContent = refreshStatus; }
+  finally { button.disabled = false; button.textContent = "Run Value Manager"; }
+}
+
+export async function recordDecisionOutcome({ decision, decisionName, button = document.querySelector(`#${decisionName}-decision`), status = document.querySelector("#health-status"), reload = start, decisionMakerId, decidedAt, comment, confirmDecision } = {}) {
+  const maker = decisionMakerId ?? document.querySelector("#decision-maker-id")?.value;
+  const effectiveDecidedAt = decidedAt ?? document.querySelector("#decision-decided-at")?.value;
+  const effectiveComment = comment === undefined ? document.querySelector("#decision-comment")?.value || null : comment;
+  const confirmation = confirmDecision ?? window.confirm;
+  if (!maker || !effectiveDecidedAt) { status.textContent = "Human decision requires an operator ID and caller-supplied timestamp."; return; }
+  if (typeof confirmation === "function" && !confirmation(`Confirm ${decisionName} for this immutable decision cycle?`)) return;
+  button.disabled = true; button.textContent = `${decisionName === "approve" ? "Approving" : "Rejecting"}…`;
+  try {
+    await apiClient.post(`/commands/decisions/${encodeURIComponent(decision.decisionCycleId)}/${decisionName}`, { decision_maker_id: maker, decided_at: new Date(effectiveDecidedAt).toISOString(), comment: effectiveComment });
+    refreshStatus = `Decision ${decisionName}d and persisted.`; await reload();
+  } catch (error) { refreshStatus = `Decision ${decisionName} failed: ${error.message}`; status.textContent = refreshStatus; }
+  finally { button.disabled = false; button.textContent = decisionName === "approve" ? "Approve" : "Reject"; }
 }
 if (app) { document.querySelector("#refresh-prices").addEventListener("click", refreshPrices); document.querySelector("#build-research").addEventListener("click", buildResearch); start(); }

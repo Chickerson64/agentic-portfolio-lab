@@ -9,6 +9,8 @@ from fastapi import APIRouter, HTTPException
 from agentic_portfolio_lab.application.refresh_prices import RefreshPricesService
 from agentic_portfolio_lab.application.build_research import BuildResearchService
 from agentic_portfolio_lab.application.wave2_commands import BenchmarkFulfillmentService, CashEventService
+from agentic_portfolio_lab.application.decision_commands import DecisionApprovalService, DecisionCommandConflict, RunValueManagerService
+from agentic_portfolio_lab.domain.approval import ApprovalDecision
 from agentic_portfolio_lab.domain.market_prices import MarketPriceConfigurationError, MarketPriceError
 from agentic_portfolio_lab.domain.research_provider import ResearchProviderConfigurationError, ResearchProviderError
 
@@ -26,6 +28,9 @@ from .models import (
     CashEventCommand,
     CashEventResponse,
     BenchmarkFulfillmentResponse,
+    DecisionApprovalCommand,
+    RunValueManagerCommand,
+    decision_memo_response,
 )
 from .queries import LatestResourceNotFound, MvpQueryService, MvpReadState
 
@@ -49,6 +54,8 @@ def create_router(
     research_service: BuildResearchService,
     cash_event_service: CashEventService | None = None,
     benchmark_fulfillment_service: BenchmarkFulfillmentService | None = None,
+    run_value_manager_service: RunValueManagerService | None = None,
+    decision_approval_service: DecisionApprovalService | None = None,
 ) -> APIRouter:
     router = APIRouter()
 
@@ -112,6 +119,50 @@ def create_router(
         if fulfillment is None:
             return BenchmarkFulfillmentResponse(status=result.status.value, fulfillment_id=None, quantity=None, notional=None, provider_identity=None, observed_at=None, market_date=None, price_convention=None)
         return BenchmarkFulfillmentResponse(status=result.status.value, fulfillment_id=str(fulfillment.fulfillment_id), quantity=format(fulfillment.quantity, "f"), notional=format(fulfillment.notional, "f"), provider_identity=fulfillment.provider_identity, observed_at=fulfillment.price_observation.observed_at.isoformat(), market_date=fulfillment.price_observation.market_date.isoformat(), price_convention=fulfillment.price_observation.price_convention)
+
+    @router.post("/commands/run-value-manager", response_model=DecisionMemoResponse)
+    def run_value_manager(command: RunValueManagerCommand) -> DecisionMemoResponse:
+        if run_value_manager_service is None:
+            raise HTTPException(status_code=503, detail={"code": "durable_state_required", "message": "Value Manager runs require configured local SQLite state"})
+        try:
+            result = run_value_manager_service.run(occurred_at=command.occurred_at)
+        except DecisionCommandConflict as error:
+            raise HTTPException(status_code=409, detail={"code": "decision_conflict", "message": str(error)}) from error
+        except RuntimeError as error:
+            raise HTTPException(status_code=502, detail={"code": "value_manager_unavailable", "message": str(error)}) from error
+        except (TypeError, ValueError) as error:
+            raise HTTPException(status_code=422, detail={"code": "value_manager_invalid", "message": str(error)}) from error
+        return decision_memo_response(result.journal_entry, None, None)
+
+    def _record_human_decision(
+        decision_cycle_id: str,
+        command: DecisionApprovalCommand,
+        outcome: ApprovalDecision,
+    ) -> DecisionMemoResponse:
+        if decision_approval_service is None:
+            raise HTTPException(status_code=503, detail={"code": "durable_state_required", "message": "decision outcomes require configured local SQLite state"})
+        try:
+            from uuid import UUID
+            approval = decision_approval_service.decide(
+                decision_cycle_id=UUID(decision_cycle_id),
+                decision=outcome,
+                decision_maker_id=command.decision_maker_id,
+                decided_at=command.decided_at,
+                comment=command.comment,
+            )
+        except DecisionCommandConflict as error:
+            raise HTTPException(status_code=409, detail={"code": "decision_conflict", "message": str(error)}) from error
+        except (TypeError, ValueError) as error:
+            raise HTTPException(status_code=422, detail={"code": "decision_approval_invalid", "message": str(error)}) from error
+        return decision_memo_response(approval.journal_entry, approval, None)
+
+    @router.post("/commands/decisions/{decision_cycle_id}/approve", response_model=DecisionMemoResponse)
+    def approve_decision(decision_cycle_id: str, command: DecisionApprovalCommand) -> DecisionMemoResponse:
+        return _record_human_decision(decision_cycle_id, command, ApprovalDecision.APPROVED)
+
+    @router.post("/commands/decisions/{decision_cycle_id}/reject", response_model=DecisionMemoResponse)
+    def reject_decision(decision_cycle_id: str, command: DecisionApprovalCommand) -> DecisionMemoResponse:
+        return _record_human_decision(decision_cycle_id, command, ApprovalDecision.REJECTED)
 
     @router.get("/portfolio", response_model=PortfolioSnapshotResponse)
     def portfolio() -> PortfolioSnapshotResponse:

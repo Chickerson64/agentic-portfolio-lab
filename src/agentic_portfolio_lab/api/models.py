@@ -143,6 +143,18 @@ class ApprovalResponse(ApiModel):
     comment: str | None
 
 
+class ExecutionReadinessResponse(ApiModel):
+    """Authoritative pre-execution status; no fill preview is calculated here."""
+
+    executable: bool
+    reason_code: str
+    decision_cycle_id: str
+    action: str
+    security: SecurityResponse | None
+    approval_status: str | None
+    validation_status: str
+
+
 class ExecutionResponse(ApiModel):
     executed_trade_id: str
     validated_trade_id: str
@@ -172,6 +184,7 @@ class DecisionMemoResponse(ApiModel):
     reviewer: ReviewerResponse | None
     approval: ApprovalResponse | None
     execution: ExecutionResponse | None
+    execution_readiness: ExecutionReadinessResponse
 
 
 class MissingDataResponse(ApiModel):
@@ -305,6 +318,16 @@ class BenchmarkFulfillmentResponse(ApiModel):
     observed_at: str | None
     market_date: str | None
     price_convention: str | None
+
+
+class RunValueManagerCommand(ApiModel):
+    occurred_at: datetime
+
+
+class DecisionApprovalCommand(ApiModel):
+    decision_maker_id: str
+    decided_at: datetime
+    comment: str | None = None
 
 
 class DashboardResponse(ApiModel):
@@ -464,6 +487,39 @@ def execution_response(executed_trade: ExecutedTrade | None) -> ExecutionRespons
     )
 
 
+def execution_readiness_response(
+    journal: DecisionJournalEntry,
+    approval: DecisionApproval | None,
+    executed_trade: ExecutedTrade | None,
+) -> ExecutionReadinessResponse:
+    recommendation = journal.decision_result.recommendation
+    validation = journal.risk_validation_result
+    security = None
+    if validation.validated_trade is not None:
+        security = security_response(validation.validated_trade.proposal.security)
+    if executed_trade is not None:
+        code = "ALREADY_EXECUTED"
+    elif recommendation.action.value == "HOLD":
+        code = "HOLD"
+    elif not validation.passed:
+        code = "VALIDATION_FAILED"
+    elif approval is None:
+        code = "NOT_APPROVED"
+    elif approval.decision.value != "APPROVED":
+        code = "REJECTED"
+    else:
+        code = "READY"
+    return ExecutionReadinessResponse(
+        executable=code == "READY",
+        reason_code=code,
+        decision_cycle_id=str(journal.decision_cycle_id),
+        action=recommendation.action.value,
+        security=security,
+        approval_status=None if approval is None else approval.decision.value,
+        validation_status=validation.status.value,
+    )
+
+
 def decision_memo_response(
     journal: DecisionJournalEntry,
     approval: DecisionApproval | None,
@@ -497,6 +553,7 @@ def decision_memo_response(
         reviewer=_reviewer_response(journal),
         approval=_approval_response(approval),
         execution=execution_response(executed_trade),
+        execution_readiness=execution_readiness_response(journal, approval, executed_trade),
     )
 
 
