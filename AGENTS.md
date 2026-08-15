@@ -6,7 +6,7 @@ This file gives future Codex agents durable guidance for working in this reposit
 
 - Agentic Portfolio Lab is primarily an AI engineering learning project.
 - Investing is the first application domain.
-- The system may eventually support paper trading and later human-approved real-money investing.
+- The system currently supports local paper trading and may later support human-approved real-money investing.
 - It must never be presented as guaranteed financial advice or an oracle.
 
 ## Engineering Principles
@@ -34,12 +34,14 @@ This file gives future Codex agents durable guidance for working in this reposit
 
 ## Current Scope
 
-- Documentation and architecture first.
-- No brokerage integration.
-- No autonomous trading.
-- No agent framework selection yet.
-- No production database or frontend decision yet.
-- The first future vertical slice will involve one Value Manager, one supplied research packet, one structured decision, deterministic validation, reviewer feedback, and a simulated portfolio action.
+v0.1 is a local weekly paper-trading loop:
+
+- One Value Manager, one Alpha Vantage ResearchBatch, deterministic validation, human approval, and simulated managed execution.
+- Durable SQLite local-run state. Do not commit the database or provider keys.
+- Twelve Data prices and a mechanical SPY benchmark (`SPY` / `NYSE ARCA` / `ETF` / `USD`).
+- FastAPI plus the Variant C operator UI. The frontend must not own financial calculations or execution policy.
+- HOLD is a legitimate terminal manager decision and must never become executable.
+- No brokerage integration, autonomous trading, real-money execution, or additional managers.
 
 ## How Codex Should Use This File
 

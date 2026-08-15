@@ -1,4 +1,4 @@
-"""FastAPI application factory for the read-first integrated MVP."""
+"""FastAPI application factory for the v0.1 operator adapter."""
 
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ def create_app(
         source = SQLiteMvpReadState(store)
     else:
         source = MvpReadStateSnapshot.from_dashboard_demo(build_demo_dashboard_data())
-    app = FastAPI(title="Agentic Portfolio Lab", version="1.0.0")
+    app = FastAPI(title="Agentic Portfolio Lab", version="0.1.0")
     # The static Phase 2 frontend is served locally on port 8001. Production
     # origins are intentionally not configured by this development adapter.
     app.add_middleware(

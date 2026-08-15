@@ -30,3 +30,9 @@ presentation layer and deterministic in-memory demo data.
   dashboard view.
 - **A custom web framework:** rejected because it adds more infrastructure than
   the first MVP requires.
+
+## Follow-up
+
+The later operator UI is FastAPI plus Variant C. This ADR still describes the
+Streamlit diagnostic/reference dashboard, which remains demo-backed and is not
+the v0.1 weekly-run interface.

@@ -28,3 +28,9 @@ htmlcov/
 # OS files
 .DS_Store
 
+# Local durable paper-trading state. Never commit live run databases,
+# provider caches, or operator financial artifacts.
+data/
+*.sqlite3
+*.sqlite
+

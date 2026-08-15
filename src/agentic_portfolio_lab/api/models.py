@@ -1,4 +1,4 @@
-"""Explicit JSON response models for the read-only application API.
+"""Explicit JSON response models for the application API.
 
 Financial values are serialized as decimal strings. This preserves the exact
 Decimal values held by immutable domain artifacts and avoids binary-float loss.

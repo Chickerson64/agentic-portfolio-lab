@@ -1,5 +1,23 @@
 # Product Roadmap
 
+## Current status (v0.1)
+
+v0.1 implements the local weekly paper-trading loop through FastAPI, Variant C,
+SQLite durability, Twelve Data prices, paper SPY fulfillment, Alpha Vantage
+research, the OpenAI Value Manager, deterministic validation, human approval,
+and managed paper execution. HOLD is a legitimate non-executing terminal
+decision.
+
+Still later-phase work, not claimed as v0.1:
+
+- export/import backups and a formal operator checklist
+- Research v2 / richer fundamental evidence
+- AI reviewer adapter
+- additional managers, SELL, and rebalance
+- brokerage, authentication, scheduling, and cloud persistence
+
+The phase list below remains the historical plan.
+
 ## Roadmap Principle
 
 Every new feature should satisfy at least one of these criteria:

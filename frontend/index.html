@@ -3,31 +3,48 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Read-only operator interface for Agentic Portfolio Lab">
+  <meta name="description" content="Local paper-trading operator interface for Agentic Portfolio Lab. View portfolio state and invoke explicit commands for prices, funding, benchmark fulfillment, research, the Value Manager, approval, and eligible paper execution. Not autonomous and not real-money trading.">
   <title>Agentic Portfolio Lab</title>
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=phase4-variant-c-restore-3">
 </head>
 <body>
   <aside class="rail">
-    <div class="logo" aria-label="Agentic Portfolio Lab">⌁</div>
+    <div class="logo" aria-label="Agentic Portfolio Lab">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M7 23 16 6l9 17M11 16h10"/></svg>
+    </div>
     <nav aria-label="Primary navigation">
-      <button class="rail-button active" data-view="overview" aria-label="Overview">▦</button>
-      <button class="rail-button" data-view="decision" aria-label="Decision Center">✦</button>
-      <button class="rail-button" data-view="research" aria-label="Research">▤</button>
-      <button class="rail-button" data-view="portfolio" aria-label="Portfolio">⌁</button>
-      <button class="rail-button" data-view="history" aria-label="History">◷</button>
+      <button class="rail-button active" data-view="overview" aria-label="Overview" title="Overview">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 13h6V4H4v9Zm0 7h6v-4H4v4Zm10 0h6v-9h-6v9Zm0-16v4h6V4h-6Z"/></svg>
+      </button>
+      <button class="rail-button" data-view="decision" aria-label="Decision Center" title="Decision Center">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 1.7 5.3L19 10l-5.3 1.7L12 17l-1.7-5.3L5 10l5.3-1.7L12 3Z"/></svg>
+      </button>
+      <button class="rail-button" data-view="research" aria-label="Research" title="Research">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11v16H6.5A2.5 2.5 0 0 0 4 21.5v-16ZM20 5.5A2.5 2.5 0 0 0 17.5 3H13v16h4.5a2.5 2.5 0 0 1 2.5 2.5v-16Z"/></svg>
+      </button>
+      <button class="rail-button" data-view="portfolio" aria-label="My Holdings" title="My Holdings">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 19h18M5 16l4-5 4 2 6-8M16 5h3v3"/></svg>
+      </button>
+      <button class="rail-button" data-view="history" aria-label="History" title="History">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.3-5.7L4 8.5M4 4v4.5h4.5M12 7v5l3 2"/></svg>
+      </button>
     </nav>
   </aside>
   <div class="shell">
     <header class="app-header">
-      <div><strong>Agentic Portfolio Lab</strong><span id="portfolio-name">Loading portfolio…</span><i>Paper · Read only</i></div>
-      <div class="command-area"><button class="refresh-button" id="refresh-prices" type="button">Refresh prices</button><button class="refresh-button" id="build-research" type="button">Build research</button><div class="header-meta" id="health-status" aria-live="polite">Connecting to API…</div></div>
+      <div class="product"><strong>Agentic Portfolio Lab</strong><span id="portfolio-name">Loading portfolio…</span><i>Paper</i></div>
+      <div class="command-area">
+        <button class="header-action" id="refresh-prices" type="button">Refresh prices</button>
+        <button class="header-action" id="build-research" type="button">Build research</button>
+        <div class="header-meta" id="health-status" aria-live="polite">Connecting to API…</div>
+        <div class="avatar" aria-label="Local operator">CO</div>
+      </div>
     </header>
     <main id="app" aria-live="polite">
       <section class="loading-state"><span class="spinner"></span><h1>Loading deterministic portfolio state</h1><p>Reading the local API contract.</p></section>
     </main>
   </div>
   <template id="error-template"><section class="empty-state"><span class="kicker">Connection status</span><h1></h1><p></p><button class="quiet-button" data-retry>Try again</button></section></template>
-  <script type="module" src="app.js"></script>
+  <script type="module" src="app.js?v=phase4-variant-c-restore-4"></script>
 </body>
 </html>

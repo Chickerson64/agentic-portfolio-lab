@@ -9,21 +9,25 @@
 
 ## First end-to-end MVP
 
-The first usable MVP is a paper-trading demonstration with manually supplied,
-source-backed Research Batches. It intentionally defers automated research
-retrieval until the decision and simulation path is proven.
+The first usable MVP is a local paper-trading demonstration. v0.1 assembles a
+five-company ResearchBatch through Alpha Vantage. Research v2 / richer evidence
+remains future work.
 
 1. `#16` Cash Event funding workflow: apply the same explicit Cash Event to the
    Value portfolio and the Passive Index portfolio, creating buying power
    without automatically trading.
-2. `#15` Passive Index Constitution: deploy available cash into SPY at the next
-   applicable regular-session close using the shared deterministic execution
-   infrastructure and price convention.
-3. `#22` Post-approval simulated execution: execute an approved BUY as a
-   simulated next-applicable regular-session-close fill and update the Value
-   portfolio.
+2. `#15` Passive Index Constitution / paper SPY fulfillment: deploy available
+   benchmark cash into SPY using an eligible persisted, provider-attributed
+   SPY PriceObservation. Fulfillment respects funding, observation, and
+   fulfillment chronology. The current Twelve Data quote convention remains
+   `twelve-data-quote-close-field`; it is not an official regular-session close.
+3. `#22` Post-approval simulated execution: execute an approved managed BUY as
+   a server-authoritative paper fill from an eligible persisted
+   PriceObservation. Deterministic validation, human approval, and executable
+   readiness are required. The frontend does not provide execution price,
+   quantity, or notional.
 4. `#23` First LLM-backed Value Manager adapter: produce one verified
-   recommendation from a supplied Research Batch.
+   recommendation from the authoritative Alpha Vantage ResearchBatch.
 5. `#17` Performance tracking and comparison: produce comparable managed and
    benchmark valuations.
 6. `#18–#21` Basic MVP dashboard: expose portfolio state, decisions, and
@@ -31,9 +35,10 @@ retrieval until the decision and simulation path is proven.
 
 ## Post-MVP roadmap
 
-The post-MVP roadmap is maintained in [Product Roadmap](roadmap.md). Its
-priority is a usable local weekly paper-trading workflow before platform-grade
-infrastructure.
+The post-MVP roadmap is maintained in [Product Roadmap](roadmap.md). v0.1 already
+covers the local weekly loop described in Phases 2–4 (operator UI, live prices,
+paper SPY fulfillment, SQLite durability, Value Manager, approval, and managed
+paper execution). Remaining later-phase items are listed below.
 
 - **Phase 0 — Release 1.0 Consolidation:** integrate completed MVP work into
   one canonical baseline; this phase does not add product functionality.
@@ -43,14 +48,18 @@ infrastructure.
   observations and fulfill the mechanical benchmark path before weekly use.
 - **Phase 4 — Weekly Paper Trading:** add the smallest SQLite-backed local
   workflow that can be operated week after week.
-- **Phase 5 — Research Automation; Phase 6 — Strategy Expansion; Phase 7 —
-  Operational Hardening:** follow only after the single-manager weekly loop is
-  useful and trustworthy.
+- **Phase 5 — Research v2; Phase 6 — Strategy Expansion; Phase 7 —
+  Operational Hardening:** first-week Alpha Vantage assembly is in v0.1;
+  richer research and later phases follow after the weekly loop is useful.
 
-## Deferred beyond the immediate weekly workflow
+## Deferred beyond v0.1
 
-- Automated research retrieval, normalization, and Research Batch assembly.
+v0.1 already retrieves and assembles a first-week Alpha Vantage ResearchBatch
+for five candidates. The following remain later work:
+
+- Research v2 / richer fundamental, cash-flow, dilution, and valuation evidence.
+- AI reviewer adapter.
 - Recurring Cash Event scheduling.
-- Additional active managers and constitutions.
+- Additional active managers and constitutions; SELL and rebalance.
 - Advanced performance analytics, optimization, or forecasting.
-- Production persistence, broker integration, and real-money execution.
+- Export/import backups, cloud persistence, broker integration, and real-money execution.

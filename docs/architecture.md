@@ -107,16 +107,24 @@ Portfolio updated
 Repeat
 ```
 
-## Near-term application shape
+## Current application shape (v0.1)
 
-The next operator-facing implementation is expected to use:
+The operator-facing implementation uses:
 
-- Python backend
-- Pydantic models for structured data
-- a thin FastAPI application adapter
+- Python backend with Pydantic models at structured boundaries
+- a thin FastAPI application adapter over deterministic domain/application services
 - Variant C as the local operator UI
-- Streamlit retained as an internal developer diagnostic tool
-- SQLite only when the weekly paper-trading workflow requires durable local
-  state
+- Streamlit retained as an internal developer diagnostic tool over demo data
+- SQLite as the local durable weekly-run store when
+  `AGENTIC_PORTFOLIO_LAB_DB_PATH` is set
 
-Market-data provider selection remains intentionally open.
+v0.1 providers are Twelve Data (prices), Alpha Vantage (research), and OpenAI
+(Value Manager). Provider-specific identity translation stays at adapter
+boundaries. Canonical SPY remains `SPY` / `NYSE ARCA` / `ETF` / `USD`.
+
+HOLD is a valid terminal manager decision. Managed paper execution requires
+deterministic validation, human approval, and backend executable readiness.
+There is no autonomous execution.
+
+Not in v0.1: additional managers, an AI reviewer adapter, Research v2 depth,
+brokerage integration, scheduling, authentication, and cloud persistence.

@@ -33,10 +33,13 @@ Out of scope for now:
 
 - real-money trading
 - brokerage integration
-- execution automation
-- live market-data provider selection
-- frontend implementation details
-- persistent order management
+- autonomous execution
+- cloud persistence and authentication
+- additional managers beyond the Value Manager
+
+v0.1 does include a local FastAPI + Variant C operator UI, Twelve Data prices,
+Alpha Vantage research, OpenAI Value Manager recommendations, and SQLite
+weekly-run persistence. Those are no longer open selection questions.
 
 ## Core portfolios
 

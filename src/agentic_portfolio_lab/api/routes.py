@@ -1,4 +1,4 @@
-"""Thin read-only HTTP routes for the MVP application adapter."""
+"""Thin HTTP adapter over deterministic application commands and queries."""
 
 from __future__ import annotations
 

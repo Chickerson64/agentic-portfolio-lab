@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "agentic-portfolio-lab"
 version = "0.1.0"
-description = "Documentation-first scaffold for an AI investment committee learning project."
+description = "Local weekly paper-trading lab that separates AI investment judgment from deterministic accounting, validation, approval, and simulated execution."
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "Proprietary" }
