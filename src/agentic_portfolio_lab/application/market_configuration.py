@@ -15,4 +15,9 @@ CANDIDATE_UNIVERSE: tuple[SecurityIdentity, ...] = (
 )
 # Research-only first-week configuration: 3 calls per candidate stays at 15.
 RESEARCH_CANDIDATE_UNIVERSE: tuple[SecurityIdentity, ...] = tuple(security for security in CANDIDATE_UNIVERSE if security.ticker in {"MSFT", "AAPL", "GOOGL", "JPM", "COST"})
+# The free Twelve Data tier permits eight requests per minute.  Retaining the
+# same five research candidates plus SPY keeps the initial live refresh at six
+# requests without changing research coverage or refresh mechanics.
+LIVE_PRICE_CANDIDATE_UNIVERSE: tuple[SecurityIdentity, ...] = RESEARCH_CANDIDATE_UNIVERSE
+TWELVE_DATA_FREE_TIER_REQUEST_LIMIT = 8
 SPY_BENCHMARK = SecurityIdentity(ticker="SPY", security_type="ETF", exchange="NYSE ARCA", currency="USD")

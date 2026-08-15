@@ -18,6 +18,7 @@ from agentic_portfolio_lab.domain.market_prices import MarketPriceError
 from agentic_portfolio_lab.domain.valuation import PriceObservation
 from agentic_portfolio_lab.api.queries import MvpReadStateSnapshot, StateSourceMetadata
 from agentic_portfolio_lab.dashboard_demo import build_demo_dashboard_data
+from agentic_portfolio_lab.infrastructure.sqlite_local_state import SQLiteLocalRunStore
 from datetime import date, datetime
 from decimal import Decimal
 
@@ -62,6 +63,49 @@ def test_health_endpoint_describes_the_explicit_demo_state() -> None:
         "persisted": False,
         "synthetic": True,
     }
+
+
+def test_cash_event_command_serializes_the_persisted_funding_graph_once(tmp_path: Path) -> None:
+    database_path = tmp_path / "local-run.sqlite"
+    initialized_at = datetime(2026, 8, 13, 14, 30, tzinfo=timezone.utc)
+    initial = SQLiteLocalRunStore(database_path).initialize_run(initialized_at=initialized_at)
+    effective_at = initialized_at + timedelta(minutes=1)
+    client = TestClient(create_app(database_path=str(database_path)))
+
+    response = client.post(
+        "/commands/cash-events",
+        json={
+            "amount": "1000",
+            "currency": "USD",
+            "source": "weekly deposit",
+            "effective_at": effective_at.isoformat(),
+        },
+    )
+
+    assert response.status_code == 200
+    persisted = SQLiteLocalRunStore(database_path).open_run()
+    assert persisted is not None
+    assert len(persisted.funding_results) == len(initial.funding_results) + 1
+    submitted = tuple(
+        item for item in persisted.funding_results
+        if item.cash_event.amount == Decimal("1000")
+        and item.cash_event.effective_at == effective_at
+        and item.cash_event.source == "weekly deposit"
+    )
+    assert len(submitted) == 1
+    funding = submitted[0]
+    assert response.json() == {
+        "event_id": str(funding.cash_event.event_id),
+        "managed_cash": format(funding.funded_managed_portfolio.cash_balance.amount, "f"),
+        "benchmark_cash": format(funding.funded_benchmark_portfolio.portfolio.cash_balance.amount, "f"),
+        "currency": funding.cash_event.currency,
+        "effective_at": funding.cash_event.effective_at.isoformat(),
+    }
+    assert funding.cash_event.effective_at == effective_at
+    assert funding.funded_managed_portfolio.cash_balance.amount == initial.managed_portfolio.cash_balance.amount + Decimal("1000")
+    assert funding.funded_benchmark_portfolio.portfolio.cash_balance.amount == initial.benchmark_portfolio.portfolio.cash_balance.amount + Decimal("1000")
+    # Response projection is read-only; it cannot append another funding result.
+    assert len(SQLiteLocalRunStore(database_path).open_run().funding_results) == len(initial.funding_results) + 1
 
 
 def test_portfolio_and_benchmark_responses_preserve_snapshot_identity_and_decimal_strings() -> None:

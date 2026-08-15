@@ -109,7 +109,14 @@ def create_router(
             result = cash_event_service.apply(amount=command.amount, currency=command.currency, source=command.source, effective_at=command.effective_at)
         except (TypeError, ValueError) as error:
             raise HTTPException(status_code=422, detail={"code": "cash_event_invalid", "message": str(error)}) from error
-        return CashEventResponse(event_id=str(result.event_id), managed_cash=format(result.funded_managed_portfolio.cash_balance.amount, "f"), benchmark_cash=format(result.funded_benchmark_portfolio.portfolio.cash_balance.amount, "f"), currency=result.cash_event.currency, effective_at=result.effective_at.isoformat())
+        event = result.cash_event
+        return CashEventResponse(
+            event_id=str(event.event_id),
+            managed_cash=format(result.funded_managed_portfolio.cash_balance.amount, "f"),
+            benchmark_cash=format(result.funded_benchmark_portfolio.portfolio.cash_balance.amount, "f"),
+            currency=event.currency,
+            effective_at=event.effective_at.isoformat(),
+        )
 
     @router.post("/commands/fulfill-benchmark", response_model=BenchmarkFulfillmentResponse)
     def fulfill_benchmark(fulfilled_at: datetime) -> BenchmarkFulfillmentResponse:

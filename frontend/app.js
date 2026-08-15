@@ -560,4 +560,10 @@ export async function executePaperTrade({ decision, button = document.querySelec
     button.textContent = "Execute Paper Trade";
   }
 }
-if (app) { document.querySelector("#refresh-prices").addEventListener("click", refreshPrices); document.querySelector("#build-research").addEventListener("click", buildResearch); start(); }
+
+export function bindShellCommands(documentObject = document) {
+  documentObject.querySelector("#refresh-prices").addEventListener("click", () => refreshPrices());
+  documentObject.querySelector("#build-research").addEventListener("click", () => buildResearch());
+}
+
+if (app) { bindShellCommands(); start(); }

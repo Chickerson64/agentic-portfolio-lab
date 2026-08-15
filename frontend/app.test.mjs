@@ -18,6 +18,7 @@ const {
   recordDecisionOutcome,
   executePaperTrade,
   isExecutionEnabled,
+  bindShellCommands,
 } = await import("./app.js");
 
 const security = (ticker = "MSFT") => ({ ticker, security_type: "EQUITY", exchange: "NASDAQ", currency: "USD" });
@@ -228,6 +229,37 @@ await executePaperTrade({ decision: readyDecision, button: failedExecutionButton
 assert.equal(failedExecutionButton.disabled, false);
 assert.equal(failedExecutionButton.textContent, "Execute Paper Trade");
 assert.match(failedExecutionStatus.textContent, /Paper execution failed: no eligible persisted PriceObservation/);
+
+const shellRefreshButton = {
+  disabled: false,
+  textContent: "Refresh prices",
+  listener: null,
+  addEventListener(type, listener) { assert.equal(type, "click"); this.listener = listener; },
+};
+const shellBuildButton = {
+  disabled: false,
+  textContent: "Build research",
+  listener: null,
+  addEventListener(type, listener) { assert.equal(type, "click"); this.listener = listener; },
+};
+const shellStatus = { textContent: "" };
+globalThis.document = {
+  querySelector(selector) {
+    return { "#refresh-prices": shellRefreshButton, "#build-research": shellBuildButton, "#health-status": shellStatus }[selector] ?? null;
+  },
+};
+bindShellCommands(globalThis.document);
+globalThis.fetch = async () => ({ ok: false, status: 503, json: async () => ({ detail: { message: "provider unavailable" } }) });
+await shellRefreshButton.listener({ button: 0, type: "click" });
+assert.equal(shellRefreshButton.disabled, false);
+assert.equal(shellRefreshButton.textContent, "Refresh prices");
+assert.equal(shellStatus.textContent, "Price refresh failed: provider unavailable");
+globalThis.fetch = async () => ({ ok: false, status: 502, json: async () => ({ detail: { message: "research provider unavailable" } }) });
+await shellBuildButton.listener({ button: 0, type: "click" });
+assert.equal(shellBuildButton.disabled, false);
+assert.equal(shellBuildButton.textContent, "Build research");
+assert.equal(shellStatus.textContent, "Research build failed: research provider unavailable");
+delete globalThis.document;
 
 const originalFetch = globalThis.fetch;
 globalThis.fetch = async (url) => {

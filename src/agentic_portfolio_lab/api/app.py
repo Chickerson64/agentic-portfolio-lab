@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from agentic_portfolio_lab.dashboard_demo import build_demo_dashboard_data
-from agentic_portfolio_lab.application.market_configuration import CANDIDATE_UNIVERSE, RESEARCH_CANDIDATE_UNIVERSE, SPY_BENCHMARK
+from agentic_portfolio_lab.application.market_configuration import LIVE_PRICE_CANDIDATE_UNIVERSE, RESEARCH_CANDIDATE_UNIVERSE, SPY_BENCHMARK
 from agentic_portfolio_lab.application.refresh_prices import InMemoryPriceRefreshState, RefreshPricesService
 from agentic_portfolio_lab.application.build_research import BuildResearchService
 from agentic_portfolio_lab.infrastructure.alpha_vantage import AlphaVantageResearchProvider
@@ -62,7 +62,7 @@ def create_app(
     service = refresh_service or RefreshPricesService(
         provider=TwelveDataMarketPriceProvider(),
         state=SQLitePriceRefreshState(store) if store is not None else InMemoryPriceRefreshState(),
-        candidate_universe=CANDIDATE_UNIVERSE,
+        candidate_universe=LIVE_PRICE_CANDIDATE_UNIVERSE,
         spy_benchmark=SPY_BENCHMARK,
     )
     research = research_service or BuildResearchService(
