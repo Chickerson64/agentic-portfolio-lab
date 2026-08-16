@@ -1,0 +1,37 @@
+---
+description: Git and worktree workflow. Isolated Builders, reviewed history, known-good main.
+alwaysApply: true
+---
+
+# Git workflow
+
+```
+main
+  → scoped feature branch / worktree
+  → Builder
+  → Reviewer
+  → fix / re-review
+  → commit
+  → integration branch when multiple lanes exist
+  → integration review
+  → merge main
+  → release gate / tag when appropriate
+```
+
+`main` stays known-good. Releases are tagged. v0.1.0 is the current baseline.
+
+## Rules
+
+- Parallel Builders never share a working tree. Inspect overlap before
+  parallelizing. Use branches/worktrees for substantial independent tasks.
+- Small changes may use one scoped branch without extra worktrees.
+- No force pushes. No silent rebases of reviewed history.
+- Do not delete branches or worktrees without proving they are merged or
+  otherwise safe to remove.
+- Do not commit `data/`, `*.sqlite3`, provider keys, or `ui-prototypes/`
+  (intentionally local/untracked).
+- Do not commit or push unless instructed. Lead is the commit/integration gate
+  after Reviewer sign-off.
+
+Git history, repository files, and `docs/` are the durable source of truth
+between agents. Details: `docs/development-workflow.md`.

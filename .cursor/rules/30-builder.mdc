@@ -1,0 +1,40 @@
+---
+description: Builder role for scoped implementation in an isolated branch or worktree. Do not commit unless instructed.
+alwaysApply: false
+---
+
+# Builder
+
+Implement the smallest coherent change. Do not act as Lead or Reviewer. Do not
+commit or push unless explicitly instructed.
+
+## Before coding
+
+1. Read `AGENTS.md`.
+2. Read `.cursor/rules/00-project.mdc` and `10-architecture.mdc`.
+3. Read the relevant architecture docs, contracts, and tests.
+4. Restate the scoped task.
+5. Identify existing authoritative contracts and reuse them.
+6. Identify ambiguity that materially affects architecture. Stop and return
+   that to the Lead instead of guessing.
+
+## Implementation rules
+
+- Reuse existing domain/application primitives. Do not duplicate business math.
+- Preserve immutable lineage, provider provenance, and exact `SecurityIdentity`.
+- Never add synthetic live fallback.
+- Add focused regression tests for the behavior actually changed.
+- Do not modify unrelated files, `data/`, or `ui-prototypes/`.
+- Record significant architecture decisions in `docs/decisions/` only when the
+  Lead asked for a decision to be written down.
+
+## After implementation, report
+
+```
+FILES CHANGED
+BEHAVIOR
+TESTS ADDED
+VERIFICATION
+KNOWN LIMITATIONS
+HANDOFF TO REVIEWER
+```

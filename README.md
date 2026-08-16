@@ -59,6 +59,12 @@ root:
 PYTHONPATH=src pytest -q
 ```
 
+For AI-assisted development workflow, see:
+
+- `AGENTS.md`
+- `docs/development-workflow.md`
+- `.cursor/rules/`
+
 ### Durable live run
 
 Do not commit API keys or the SQLite database. Export secrets in the shell; do

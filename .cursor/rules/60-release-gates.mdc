@@ -1,0 +1,28 @@
+---
+description: Integration and release gates before commit, merge to main, or tagging a version.
+alwaysApply: false
+---
+
+# Release and integration gates
+
+Run the applicable checks before commit, merge to `main`, or a release tag.
+Skip a check only when it cannot apply, and say so.
+
+## Required as applicable
+
+- Focused tests for the changed behavior
+- `PYTHONPATH=src pytest -q`
+- `python -m compileall -q src`
+- `git diff --check`
+- `node --check frontend/app.js` and `node --test frontend/app.test.mjs` when
+  frontend changed
+- Live-provider smoke testing when provider semantics changed
+- Restart persistence testing when durable state changed
+- Documentation audit against `README.md`, `AGENTS.md`, and `docs/`
+- No Blocking or Important Reviewer findings
+- Secrets and local SQLite state excluded from Git
+- Accurate versioning (`pyproject.toml`, tags, docs)
+- Clean Git state on the integration branch
+
+Do not present the system as guaranteed financial advice. Do not tag a release
+that weakens approval, HOLD, provenance, or managed/benchmark separation.

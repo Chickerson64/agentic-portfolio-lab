@@ -1,0 +1,42 @@
+---
+description: Architectural boundaries and lineage. Apply before changing structure or contracts.
+alwaysApply: true
+---
+
+# Architecture
+
+Reuse existing contracts. Do not invent competing models, services, or
+abstractions. Inspect `docs/architecture.md`, `docs/decisions/`, and the
+matching domain/application modules before changing behavior.
+
+Layer responsibilities:
+
+- `src/agentic_portfolio_lab/domain` — deterministic models, invariants, math
+- `src/agentic_portfolio_lab/application` — workflows, services, orchestration
+- `src/agentic_portfolio_lab/infrastructure` — providers, SQLite, external adapters
+- `src/agentic_portfolio_lab/api` — transport and serialization only
+- `frontend/` — presentation and operator commands only
+
+FastAPI must not own portfolio, recommendation, validation, benchmark,
+execution, or financial-calculation policy. Streamlit is a diagnostic demo UI,
+not the v0.1 operator loop.
+
+## Managed decision lineage
+
+Keep this chain intact and auditable:
+
+`ResearchBatch` → `decision_cycle_id` → recommendation → deterministic
+validation → journal → approval → execution/history
+
+Managers produce intent only (ADR-003). They never execute or mutate
+portfolios.
+
+## Benchmark lineage (separate)
+
+Keep funding and benchmark fulfillment off the managed execution path:
+
+paired Cash Event funding → benchmark fulfillment → benchmark history
+
+Canonical SPY identity is `SPY` / `NYSE ARCA` / `ETF` / `USD`. Provider
+identity translation stays at adapter boundaries. See ADR-001, ADR-002, and
+ADR-006.

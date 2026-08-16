@@ -1,0 +1,36 @@
+---
+description: Core product principles for Agentic Portfolio Lab. Apply to every agent and task.
+alwaysApply: true
+---
+
+# Project principles
+
+Agentic Portfolio Lab is an auditable local paper-investing system. It is a
+learning project, not financial advice or an oracle.
+
+Authoritative contract: `AGENTS.md`. Details live in `docs/` (especially
+`docs/architecture.md`, `docs/design-principles.md`, `docs/project-charter.md`,
+`docs/roadmap.md`, `docs/backlog.md`, `docs/open-questions.md`, and
+`docs/decisions/`). Do not duplicate or contradict those documents.
+
+v0.1.0 is the known-good baseline. Do not expand scope just to make a test or
+demo pass.
+
+## Core rules
+
+- AI proposes; deterministic code validates and owns financial state.
+- Human approval is required before managed BUY execution.
+- HOLD is a legitimate terminal decision and must never become executable.
+- No synthetic fallback in durable/live mode (`AGENTIC_PORTFOLIO_LAB_DB_PATH`
+  set). The unset-path in-memory demo API is not the paper-trading workflow.
+- Missing evidence is explicit, never fabricated.
+- Provider provenance and timestamps must remain truthful.
+- Exact `SecurityIdentity` lineage matters; do not collapse identity to ticker.
+- Immutable historical artifacts must not be rewritten.
+- Managed and benchmark portfolios remain distinct.
+- Financial calculations belong in domain/application code, not frontend JS.
+- Frontend renders authoritative backend state and posts existing commands.
+- SQLite is the current durable store. Do not commit the DB or provider keys.
+- Do not touch `data/` or `ui-prototypes/` unless the user explicitly asks.
+
+If a requested change conflicts with these rules, stop and surface the conflict.

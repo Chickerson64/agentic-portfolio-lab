@@ -1,6 +1,7 @@
 # AGENTS.md
 
-This file gives future Codex agents durable guidance for working in this repository.
+This file is the human-readable repository engineering contract for Codex,
+Cursor, and any other agent working in this repository.
 
 ## Project Purpose
 
@@ -34,7 +35,7 @@ This file gives future Codex agents durable guidance for working in this reposit
 
 ## Current Scope
 
-v0.1 is a local weekly paper-trading loop:
+v0.1.0 is the tagged known-good baseline. v0.1 is a local weekly paper-trading loop:
 
 - One Value Manager, one Alpha Vantage ResearchBatch, deterministic validation, human approval, and simulated managed execution.
 - Durable SQLite local-run state. Do not commit the database or provider keys.
@@ -43,7 +44,24 @@ v0.1 is a local weekly paper-trading loop:
 - HOLD is a legitimate terminal manager decision and must never become executable.
 - No brokerage integration, autonomous trading, real-money execution, or additional managers.
 
-## How Codex Should Use This File
+## Cursor workflow
+
+The user talks to the Lead. The Lead delegates implementation to Builder(s)
+and completed work to a Reviewer, then owns commit, integration, and release
+gates.
+
+```text
+Lead → Builder → Reviewer → Lead
+```
+
+Cursor agents must follow `.cursor/rules/`. Role details, worktrees, review
+loops, model usage, and release gates are in
+`docs/development-workflow.md`. Do not copy those rules back into this file.
+
+Git history, repository files, and `docs/` are the durable shared memory
+between agents. Chat is not.
+
+## How agents should use this file
 
 - Treat this as the default operating agreement for the repository unless a more specific instruction overrides it.
 - Re-read it before starting new work in this project so decisions stay aligned over time.
