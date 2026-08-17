@@ -121,9 +121,10 @@ def _selected_with_role(run, role: ResearchSlotRole) -> SecurityIdentity:
     return next(security for security in run.selected if by_security[security].slot_role is role)
 
 
-def test_value_us_equities_v1_uses_provisional_managed_universe() -> None:
+def test_value_us_equities_v1_uses_operator_approved_managed_universe() -> None:
     assert VALUE_US_EQUITIES_V1.universe_version == "value-us-equities-v1"
     assert VALUE_US_EQUITIES_V1.identities == CANDIDATE_UNIVERSE
+    assert len(CANDIDATE_UNIVERSE) == 30
 
 
 def test_ranked_order_prefers_more_discounted_52w_position_over_higher_pe() -> None:

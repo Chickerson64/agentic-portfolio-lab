@@ -35,7 +35,9 @@ role, and `screening_run_id` stay off the Value Manager LLM payload.
 
 Operator OVERVIEW bootstrap and the weekly screen → refresh-selected → assemble
 loop have landed. Rank and slot role are still not sent to the Value Manager.
-The operator API may show selected slot roles for audit only.
+The operator API may show selected slot roles for audit only. The
+operator-approved 30-name `VALUE_US_EQUITIES_V1` snapshot is now the live
+managed universe.
 
 ## Consequences
 

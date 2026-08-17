@@ -336,8 +336,9 @@ def test_refresh_prices_command_returns_provider_metadata_and_includes_spy() -> 
     response = client.post("/commands/refresh-prices")
 
     assert response.status_code == 200
-    assert response.json() == {
-        "refreshed_tickers": ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "JPM", "V", "COST", "SPY"],
+    body = response.json()
+    assert body == {
+        "refreshed_tickers": [observation.security.ticker for observation in refresh_state.latest_observations],
         "provider_identity": "fake-provider",
         "latest_source_timestamp": "2026-08-13T20:00:00+00:00",
         "price_convention": "fake-price",

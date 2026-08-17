@@ -9,10 +9,11 @@
 
 ## First end-to-end MVP
 
-The first usable MVP is a local paper-trading demonstration. v0.1 screens a
-versioned managed universe and assembles a five-slot ResearchBatch through
-Alpha Vantage. Remaining related work is expanding that universe after
-operator approval.
+The first usable MVP is a local paper-trading demonstration. v0.1 screens the
+approved 30-name `value-us-equities-v1` snapshot as the live managed universe
+and assembles a five-slot ResearchBatch through Alpha Vantage. Remaining related
+research work is additional evidence sources, not expanding this universe
+snapshot.
 
 1. `#16` Cash Event funding workflow: apply the same explicit Cash Event to the
    Value portfolio and the Passive Index portfolio, creating buying power
@@ -50,9 +51,10 @@ paper execution). Remaining later-phase items are listed below.
 - **Phase 4 — Weekly Paper Trading:** add the smallest SQLite-backed local
   workflow that can be operated week after week.
 - **Phase 5 — Research v2; Phase 6 — Strategy Expansion; Phase 7 —
-  Operational Hardening:** Research v2 screening, reuse, derived metrics, and
-  OVERVIEW bootstrap are implemented; expanding the versioned universe after
-  operator approval remains, then later phases follow after the weekly loop is
+  Operational Hardening:** Research v2 screening, reuse, derived metrics,
+  OVERVIEW bootstrap, and the approved 30-name `value-us-equities-v1` snapshot
+  as the live managed universe are implemented; remaining research work is
+  additional evidence sources, then later phases follow after the weekly loop is
   useful.
 
 ## Deferred beyond v0.1
@@ -61,7 +63,7 @@ v0.1 already retrieves and assembles a screened five-slot Alpha Vantage
 ResearchBatch over the versioned managed universe. The following remain later
 work:
 
-- Expanding the versioned managed universe after operator approval.
+- Additional research evidence sources and retrieval adapters.
 - AI reviewer adapter.
 - Recurring Cash Event scheduling.
 - Additional active managers and constitutions; SELL and rebalance.

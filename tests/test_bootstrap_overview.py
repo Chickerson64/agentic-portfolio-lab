@@ -182,19 +182,20 @@ def _large_universe(count: int) -> CandidateUniverse:
 
 
 def test_skips_cached_overview_for_exact_identity_and_fetches_the_rest():
-    universe = VALUE_US_EQUITIES_V1
-    cached = universe.identities[0]
+    identities = VALUE_US_EQUITIES_V1.identities[:3]
+    universe = CandidateUniverse("cache-skip-slice", identities)
+    cached = identities[0]
     state = FakeOverviewState(records=[_cached_overview(cached)])
     provider = FakeOverviewProvider()
 
-    result = _service(state, provider).bootstrap()
+    result = _service(state, provider, universe=universe).bootstrap()
 
     assert result.skipped == (cached,)
-    assert result.fetched == universe.identities[1:]
+    assert result.fetched == identities[1:]
     assert result.remaining == ()
-    assert result.request_count == len(universe.identities) - 1
+    assert result.request_count == len(identities) - 1
     assert result.request_count <= ALPHA_VANTAGE_DAILY_REQUEST_LIMIT
-    assert provider.calls == list(universe.identities[1:])
+    assert provider.calls == list(identities[1:])
     assert provider.statement_calls == 0
     assert all(record.endpoint is ProviderEndpoint.OVERVIEW for record in state.records)
     assert all(record.security == cached or record.security in result.fetched for record in state.records)
