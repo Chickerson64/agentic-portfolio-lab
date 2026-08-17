@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from agentic_portfolio_lab.dashboard_demo import build_demo_dashboard_data
-from agentic_portfolio_lab.application.market_configuration import LIVE_PRICE_CANDIDATE_UNIVERSE, RESEARCH_CANDIDATE_UNIVERSE, SPY_BENCHMARK
+from agentic_portfolio_lab.application.market_configuration import LIVE_PRICE_CANDIDATE_UNIVERSE, SPY_BENCHMARK, VALUE_US_EQUITIES_V1
 from agentic_portfolio_lab.application.refresh_prices import InMemoryPriceRefreshState, RefreshPricesService
 from agentic_portfolio_lab.application.build_research import BuildResearchService
 from agentic_portfolio_lab.infrastructure.alpha_vantage import AlphaVantageResearchProvider
@@ -68,7 +68,7 @@ def create_app(
     research = research_service or BuildResearchService(
         provider=AlphaVantageResearchProvider(),
         state=SQLiteResearchBatchState(store) if store is not None else _UnavailableResearchState(),
-        candidate_universe=RESEARCH_CANDIDATE_UNIVERSE,
+        universe=VALUE_US_EQUITIES_V1,
     )
     app.include_router(
         create_router(
@@ -90,7 +90,10 @@ def create_app(
 
 
 class _UnavailableResearchState:
-    def append_research_batch(self, batch) -> None:
+    def load_research_inputs(self):
+        raise ValueError("research persistence requires AGENTIC_PORTFOLIO_LAB_DB_PATH")
+
+    def persist_research_cycle(self, *, screening_run, fetched_records, batch) -> None:
         raise ValueError("research persistence requires AGENTIC_PORTFOLIO_LAB_DB_PATH")
 
 

@@ -8,11 +8,16 @@ from dataclasses import replace
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
+from typing import Sequence
 from uuid import uuid4
 
+from agentic_portfolio_lab.application.build_research import ResearchCycleInputs
 from agentic_portfolio_lab.application.local_state import LocalRunMetadata, PersistedRunState
 from agentic_portfolio_lab.application.market_configuration import SPY_BENCHMARK
 from agentic_portfolio_lab.application.local_state_codec import decode_run_state, encode
+from agentic_portfolio_lab.domain.provider_fundamentals import ProviderFundamentalRecord
+from agentic_portfolio_lab.domain.research import ResearchBatch
+from agentic_portfolio_lab.domain.screening import ScreeningRun
 from agentic_portfolio_lab.dashboard import DecisionHistoryArtifacts
 from agentic_portfolio_lab.domain.cash_events import CashEvent, CashEventFundingWorkflow
 from agentic_portfolio_lab.domain.performance import BenchmarkPerformanceHistory, PerformanceComparison, PortfolioPerformanceHistory
@@ -370,21 +375,57 @@ class SQLitePriceRefreshState:
 
 
 class SQLiteResearchBatchState:
-    """Append a completed immutable ResearchBatch through the existing transition."""
+    """Read cycle inputs and persist screening, fetched records, and one batch together."""
 
     def __init__(self, store: SQLiteLocalRunStore) -> None:
+        if not isinstance(store, SQLiteLocalRunStore):
+            raise TypeError("store must be a SQLiteLocalRunStore")
         self._store = store
 
-    def append_research_batch(self, batch) -> None:
-        from agentic_portfolio_lab.domain.research import ResearchBatch
-        if not isinstance(batch, ResearchBatch):
-            raise TypeError("batch must be a ResearchBatch")
+    def _require_run(self) -> PersistedRunState:
         current = self._store.open_run()
         if current is None:
             raise ValueError("local SQLite run has not been initialized")
+        return current
+
+    def load_research_inputs(self) -> ResearchCycleInputs:
+        current = self._require_run()
+        return ResearchCycleInputs(
+            price_observations=current.price_observations,
+            fundamental_records=current.fundamental_records,
+        )
+
+    def persist_research_cycle(
+        self,
+        *,
+        screening_run: ScreeningRun,
+        fetched_records: Sequence[ProviderFundamentalRecord],
+        batch: ResearchBatch,
+    ) -> None:
+        if not isinstance(screening_run, ScreeningRun):
+            raise TypeError("screening_run must be a ScreeningRun")
+        records = tuple(fetched_records)
+        if not all(isinstance(record, ProviderFundamentalRecord) for record in records):
+            raise TypeError("fetched_records must contain ProviderFundamentalRecord instances")
+        if not isinstance(batch, ResearchBatch):
+            raise TypeError("batch must be a ResearchBatch")
+        current = self._require_run()
+        if any(existing.screening_run_id == screening_run.screening_run_id for existing in current.screening_runs):
+            raise ValueError("screening run must not rewrite a persisted run")
+        existing_record_ids = {record.record_id for record in current.fundamental_records}
+        for record in records:
+            if record.record_id in existing_record_ids:
+                raise ValueError("fundamental record must not rewrite a persisted record")
         if any(existing.batch_id == batch.batch_id for existing in current.research_batches):
             raise ValueError("research batch must not rewrite a persisted batch")
-        self._store.save_transition(replace(current, research_batches=(*current.research_batches, batch)))
+        self._store.save_transition(
+            replace(
+                current,
+                screening_runs=(*current.screening_runs, screening_run),
+                fundamental_records=(*current.fundamental_records, *records),
+                research_batches=(*current.research_batches, batch),
+            )
+        )
 
 
 class SQLiteMvpReadState:

@@ -27,7 +27,11 @@ derived metrics, and batch assembly.
 
 Lane 0 lands these types, invariants, codec defaults, and SQLite append-only
 hooks. Screening rank policy, Alpha Vantage BALANCE_SHEET/CASH_FLOW fetching,
-derived FCF/EV math, and ResearchBatch assembly land in later lanes.
+and derived FCF/EV math land in later lanes. Lane 3 weekly assembly now screens
+`VALUE_US_EQUITIES_V1`, refreshes only selected names, attaches
+`PacketFundamentals`, and persists `ScreeningRun` plus FETCHED records plus
+`ResearchBatch.screening_run_id` in one append-only transition. Rank, slot
+role, and `screening_run_id` stay off the Value Manager LLM payload.
 
 ## Consequences
 

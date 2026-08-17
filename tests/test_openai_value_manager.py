@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import FrozenInstanceError
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
@@ -20,9 +19,25 @@ from agentic_portfolio_lab.domain import (
     ValueManagerDecisionWorkflow,
 )
 from agentic_portfolio_lab.domain.constitution import ConstitutionLoader
-from agentic_portfolio_lab.domain.openai_value_manager import _recommendation_schema, _serialize_section
+from agentic_portfolio_lab.domain.openai_value_manager import _build_prompt, _recommendation_schema, _serialize_packet, _serialize_section
 from agentic_portfolio_lab.domain.portfolio import CashBalance, Portfolio, Position, SecurityIdentity
-from agentic_portfolio_lab.domain.research import EvidenceItem, MissingData, MissingDataReason, ResearchBatch, ResearchPacket, ResearchSection
+from agentic_portfolio_lab.domain.provider_fundamentals import (
+    FreshnessClass,
+    ProviderEndpoint,
+    ReliabilityClass,
+    ReuseStatus,
+)
+from agentic_portfolio_lab.domain.research import (
+    DerivedMetric,
+    EvidenceItem,
+    MissingData,
+    MissingDataReason,
+    PacketComponentCoverage,
+    PacketFundamentals,
+    ResearchBatch,
+    ResearchPacket,
+    ResearchSection,
+)
 
 
 UTC = timezone.utc
@@ -320,3 +335,99 @@ def test_openai_value_manager_structured_output_contains_domain_owned_values(
         assert actual[0].source_type == "FILING"
     else:
         assert actual == expected
+
+
+def _packet_with_fundamentals() -> ResearchPacket:
+    evidence = _evidence()
+    fundamentals = PacketFundamentals(
+        coverage=(
+            PacketComponentCoverage(
+                endpoint=ProviderEndpoint.OVERVIEW,
+                reuse_status=ReuseStatus.FETCHED_THIS_CYCLE,
+                freshness=FreshnessClass.FRESH,
+                reliability=ReliabilityClass.PROVIDER_COMPUTED,
+                fiscal_period=date(2026, 6, 30),
+                source_date=date(2026, 6, 30),
+                fetched_at=datetime(2026, 8, 10, 12, tzinfo=UTC),
+            ),
+        ),
+        derived=(
+            DerivedMetric(
+                metric_id="fcf",
+                value=Decimal("25"),
+                formula_id="fcf",
+                input_keys=("operating_cash_flow", "capex"),
+                reliability=ReliabilityClass.DERIVED_DETERMINISTIC,
+                freshness=FreshnessClass.FRESH,
+            ),
+            DerivedMetric(
+                metric_id="ttm_fcf",
+                value=MissingData(MissingDataReason.NOT_AVAILABLE, "fewer than four valid quarters"),
+                formula_id="ttm_fcf",
+                input_keys=("quarterly_operating_cash_flow", "quarterly_capex"),
+                reliability=ReliabilityClass.DERIVED_DETERMINISTIC,
+                freshness=FreshnessClass.FRESH,
+            ),
+        ),
+    )
+    return ResearchPacket(
+        packet_id="packet_aapl",
+        candidate_id="candidate_aapl",
+        ticker="AAPL",
+        security_type="EQUITY",
+        exchange="NASDAQ",
+        currency="USD",
+        company_name="Apple Inc.",
+        sector="Technology",
+        industry="Consumer Electronics",
+        as_of_timestamp=datetime(2026, 8, 10, 12, tzinfo=UTC),
+        evidence_items=(evidence,),
+        sections=(
+            ResearchSection(
+                section_id="BUSINESS_OVERVIEW",
+                content="The company sells devices and services.",
+                evidence_ids=(evidence.evidence_id,),
+            ),
+        ),
+        fundamentals=fundamentals,
+    )
+
+
+def test_serialize_packet_includes_fundamentals_and_omits_rank_slot_and_screening_run_id() -> None:
+    serialized = _serialize_packet(_packet_with_fundamentals())
+    blob = json.dumps(serialized)
+    assert serialized["fundamentals"]["coverage"][0]["reuse_status"] == "FETCHED_THIS_CYCLE"
+    assert serialized["fundamentals"]["derived"][0]["metric_id"] == "fcf"
+    assert serialized["fundamentals"]["derived"][0]["value"] == "25"
+    assert serialized["fundamentals"]["derived"][1]["value"]["missing"] is True
+    assert "rank_key" not in blob
+    assert "slot_role" not in blob
+    assert "screening_run_id" not in blob
+
+
+def test_manager_prompt_says_derived_metrics_are_already_computed() -> None:
+    portfolio = _portfolio()
+    packet = _packet_with_fundamentals()
+    batch = ResearchBatch(
+        batch_id="batch_001",
+        decision_cycle_id=uuid4(),
+        portfolio_id=portfolio.portfolio_id,
+        manager_type="VALUE",
+        created_at=datetime(2026, 8, 10, 13, tzinfo=UTC),
+        as_of_timestamp=datetime(2026, 8, 10, 12, tzinfo=UTC),
+        packets=(packet,),
+        screening_run_id=uuid4(),
+    )
+    context = ValueManagerDecisionContext(
+        portfolio=portfolio,
+        research_batch=batch,
+        constitution=ConstitutionLoader.load_value_manager_constitution(),
+    )
+    system_prompt, user_prompt = _build_prompt(context)
+    assert "already computed by deterministic code" in system_prompt
+    assert "Do not recompute FCF, EV, TTM" in system_prompt
+    assert "screening_run_id" not in user_prompt
+    assert "rank_key" not in user_prompt
+    assert "slot_role" not in user_prompt
+    assert '"metric_id": "fcf"' in user_prompt
+    assert '"reuse_status": "FETCHED_THIS_CYCLE"' in user_prompt
