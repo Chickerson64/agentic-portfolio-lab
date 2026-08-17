@@ -13,7 +13,12 @@ The current local weekly paper-trading loop includes:
 - durable SQLite local-run state, including paired Cash Event funding;
 - live Twelve Data price refresh for the configured candidate universe plus SPY;
 - mechanical SPY benchmark fulfillment from a persisted provider-attributed quote;
-- Alpha Vantage assembly of a five-company `ResearchBatch`;
+- Alpha Vantage Research v2: a versioned managed universe (currently the
+  provisional 8-name `VALUE_US_EQUITIES_V1`), a cheap OVERVIEW screen, five
+  deep research slots, statement reuse, and derived metrics computed in
+  application code;
+- an explicit OVERVIEW bootstrap command that fills missing overview rows at
+  most 25 Alpha Vantage requests per invocation;
 - an OpenAI Value Manager adapter that consumes that research and produces one
   structured BUY or HOLD recommendation;
 - deterministic risk validation, a decision journal, and human approval;
@@ -29,8 +34,9 @@ identity translation stays inside the adapter. Quote `close` is attributed as
 `twelve-data-quote-close-field`; it is not claimed to be an official
 regular-session close.
 
-The first-week research and live-price universe is `MSFT`, `AAPL`, `GOOGL`,
-`JPM`, and `COST`, plus SPY on price refresh.
+The first-week research universe is the provisional 8-name
+`VALUE_US_EQUITIES_V1` snapshot. Live price refresh covers that universe plus
+SPY. Expanding the versioned list to ~30 names waits on operator approval.
 
 All financial state transitions are deterministic and traceable through domain
 artifacts. The OpenAI adapter produces recommendations only; it never executes
@@ -38,7 +44,7 @@ trades. There is no autonomous execution.
 
 ## Not implemented / future work
 
-- richer Research v2 evidence (balance sheet, cash flow, dilution, valuation);
+- expanding the versioned managed universe after operator approval;
 - an AI reviewer adapter;
 - SELL, rebalance, or additional AI managers;
 - brokerage integration or real-money execution;
@@ -116,13 +122,16 @@ timestamps are timezone-aware ISO 8601 strings.
 The intended live workflow is:
 
 1. initialize the durable run
-2. refresh prices
-3. fulfill the SPY benchmark when an eligible quote exists
-4. build research
-5. run the Value Manager
-6. inspect deterministic validation
-7. human approve or reject
-8. execute a managed paper BUY only when the backend reports executable
+2. bootstrap OVERVIEW as needed (multi-day; at most 25 Alpha Vantage requests
+   per invocation; already-cached identities are skipped)
+3. refresh prices
+4. fulfill the SPY benchmark when an eligible quote exists
+5. build research (screens the versioned universe and deep-refreshes selected
+   names, reusing current statements)
+6. run the Value Manager
+7. inspect deterministic validation
+8. human approve or reject
+9. execute a managed paper BUY only when the backend reports executable
    readiness
 
 HOLD may be approved. Approval of HOLD does not create managed execution.

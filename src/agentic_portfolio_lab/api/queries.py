@@ -12,6 +12,8 @@ from agentic_portfolio_lab.domain.journal import DecisionJournalEntry
 from agentic_portfolio_lab.domain.performance import BenchmarkPerformanceHistory, PerformanceComparison, PortfolioPerformanceHistory
 from agentic_portfolio_lab.domain.portfolio import SecurityIdentity
 from agentic_portfolio_lab.domain.benchmark_fulfillment import PassiveIndexFulfillment
+from agentic_portfolio_lab.domain.research import ResearchBatch
+from agentic_portfolio_lab.domain.screening import ScreeningRun
 from agentic_portfolio_lab.application.research_selection import latest_authoritative_research_batch
 
 from .models import (
@@ -53,6 +55,7 @@ class MvpReadStateSnapshot:
     history_entries: tuple[DecisionHistoryArtifacts, ...]
     source_metadata: StateSourceMetadata
     research_batches: tuple = ()
+    screening_runs: tuple[ScreeningRun, ...] = ()
     benchmark_fulfillments: tuple[PassiveIndexFulfillment, ...] = ()
     benchmark_fulfillment_status: str = "PENDING_NO_ELIGIBLE_PRICE"
 
@@ -71,6 +74,7 @@ class MvpReadStateSnapshot:
                 synthetic=True,
             ),
             research_batches=(),
+            screening_runs=(),
             benchmark_fulfillments=(),
             benchmark_fulfillment_status="PENDING_NO_ELIGIBLE_PRICE",
         )
@@ -175,12 +179,23 @@ class MvpQueryService:
             self._execution_for_journal(journal),
         )
 
+    def _screening_run_for(self, batch: ResearchBatch) -> ScreeningRun | None:
+        if batch.screening_run_id is None:
+            return None
+        runs = tuple(getattr(self._state, "screening_runs", ()))
+        matches = tuple(run for run in runs if run.screening_run_id == batch.screening_run_id)
+        if len(matches) != 1:
+            return None
+        return matches[0]
+
     def research_latest(self) -> ResearchBatchResponse:
         persisted_batches = getattr(self._state, "research_batches", ())
         if persisted_batches:
-            return research_batch_response(latest_authoritative_research_batch(persisted_batches))
-        journal, _ = self._latest_journal_and_approval()
-        return research_batch_response(journal.decision_result.context.research_batch)
+            batch = latest_authoritative_research_batch(persisted_batches)
+        else:
+            journal, _ = self._latest_journal_and_approval()
+            batch = journal.decision_result.context.research_batch
+        return research_batch_response(batch, self._screening_run_for(batch))
 
     def decisions(self) -> HistoryResponse:
         history = self._dashboard_view().history

@@ -250,6 +250,7 @@ export function normalizeResearch(payload) {
   if (payload === null) return null;
   const context = "research";
   record(payload, context);
+  const selectedPayload = Object.hasOwn(payload, "selected") ? list(field(payload, "selected", context), `${context}.selected`) : [];
   return {
     batchId: text(field(payload, "batch_id", context), `${context}.batch_id`),
     decisionCycleId: text(field(payload, "decision_cycle_id", context), `${context}.decision_cycle_id`),
@@ -257,6 +258,14 @@ export function normalizeResearch(payload) {
     managerType: text(field(payload, "manager_type", context), `${context}.manager_type`),
     createdAt: text(field(payload, "created_at", context), `${context}.created_at`),
     asOfTimestamp: text(field(payload, "as_of_timestamp", context), `${context}.as_of_timestamp`),
+    screeningRunId: Object.hasOwn(payload, "screening_run_id") ? nullableText(field(payload, "screening_run_id", context), `${context}.screening_run_id`) : null,
+    selected: selectedPayload.map((item, index) => {
+      const itemContext = `${context}.selected[${index}]`;
+      return {
+        security: normalizeSecurity(field(item, "security", itemContext), `${itemContext}.security`),
+        slotRole: text(field(item, "slot_role", itemContext), `${itemContext}.slot_role`),
+      };
+    }),
     packets: list(field(payload, "packets", context), `${context}.packets`).map((packet, index) => {
       const item = `${context}.packets[${index}]`;
       return {
@@ -376,6 +385,17 @@ export function normalizePriceRefresh(payload) {
 export function normalizeBuildResearch(payload) {
   const context = "research build";
   return { batchId: text(field(payload, "batch_id", context), `${context}.batch_id`), decisionCycleId: text(field(payload, "decision_cycle_id", context), `${context}.decision_cycle_id`), packetCount: number(field(payload, "packet_count", context), `${context}.packet_count`), provider: text(field(payload, "source_provider_identity", context), `${context}.source_provider_identity`), asOfTimestamp: text(field(payload, "as_of_timestamp", context), `${context}.as_of_timestamp`) };
+}
+export function normalizeBootstrapOverview(payload) {
+  const context = "overview bootstrap";
+  const identities = (value, key) => list(field(payload, key, context), `${context}.${key}`).map((item, index) => normalizeSecurity(item, `${context}.${key}[${index}]`));
+  return {
+    fetched: identities(payload, "fetched"),
+    skipped: identities(payload, "skipped"),
+    remaining: identities(payload, "remaining"),
+    requestCount: number(field(payload, "request_count", context), `${context}.request_count`),
+    providerIdentity: text(field(payload, "provider_identity", context), `${context}.provider_identity`),
+  };
 }
 
 export async function loadApplication() {
@@ -499,13 +519,28 @@ function researchSectionMarkup(section) {
   return `<p>${esc(section.content)}</p>`;
 }
 
+function slotRoleForPacket(research, packet) {
+  const selected = research.selected ?? [];
+  const match = selected.find((item) => (
+    item.security.ticker === packet.ticker
+    && item.security.securityType === packet.securityType
+    && item.security.exchange === packet.exchange
+    && item.security.currency === packet.currency
+  ));
+  return match?.slotRole ?? null;
+}
+
 function renderResearch(state) {
   const target = document.querySelector("#research"), research = state.research;
   if (!research) { target.innerHTML = empty("No latest research", "The API reports no authoritative ResearchBatch for the latest decision."); return; }
-  target.innerHTML = `<div class="page-heading"><div><span class="kicker">Research workspace</span><h1>Source-backed research packets</h1><p>Research is immutable input; it is not a recommendation.</p></div><div class="cycle-id"><span class="kicker">Research batch</span><strong>${esc(research.batchId)}</strong><small>${esc(research.packets.length)} packets</small></div></div><div class="packet-list"><aside class="packet-nav">${research.packets.map((item, index) => `<button class="packet-button ${index === 0 ? "active" : ""}" data-packet-index="${index}"><strong>${esc(item.ticker)}</strong><small>${esc(item.companyName)}</small></button>`).join("")}</aside><article class="surface document" id="research-document"></article></div>`;
+  target.innerHTML = `<div class="page-heading"><div><span class="kicker">Research workspace</span><h1>Source-backed research packets</h1><p>Research is immutable input; it is not a recommendation.</p></div><div class="cycle-id"><span class="kicker">Research batch</span><strong>${esc(research.batchId)}</strong><small>${esc(research.packets.length)} packets</small></div></div><div class="packet-list"><aside class="packet-nav">${research.packets.map((item, index) => {
+    const slotRole = slotRoleForPacket(research, item);
+    return `<button class="packet-button ${index === 0 ? "active" : ""}" data-packet-index="${index}"><strong>${esc(item.ticker)}</strong><small>${esc(item.companyName)}${slotRole ? ` · ${esc(slotRole)}` : ""}</small></button>`;
+  }).join("")}</aside><article class="surface document" id="research-document"></article></div>`;
   const paint = (selected) => {
     const packet = research.packets[selected];
-    document.querySelector("#research-document").innerHTML = `<span class="kicker">${esc(packet.packetId)}</span><h2>${esc(packet.companyName)}</h2><p class="muted">${esc(packet.exchange)} · ${esc(packet.industry)} · ${esc(packet.currency)}</p><div class="research-sections">${packet.sections.map((section) => `<section class="section-card"><span class="kicker">Source-backed section</span><h3>${esc(section.sectionId.replaceAll("_", " "))}</h3>${researchSectionMarkup(section)}<small>Evidence: ${esc(section.evidenceIds.join(", ") || "none")}</small></section>`).join("")}<section class="evidence-wrap"><div class="surface-head"><div><span class="kicker">Provenance</span><h3>Evidence</h3></div><span class="chip">${esc(packet.evidence.length)} ITEMS</span></div><table class="evidence-table"><thead><tr><th>ID</th><th>Source</th><th>Date</th><th>Claim supported</th></tr></thead><tbody>${packet.evidence.map((evidence) => `<tr><td>${esc(evidence.evidenceId)}</td><td>${esc(evidence.sourceType)} · ${esc(evidence.sourceTitle)}</td><td>${esc(evidence.sourceDate)}</td><td>${esc(evidence.claimSupported)}</td></tr>`).join("")}</tbody></table></section></div>`;
+    const slotRole = slotRoleForPacket(research, packet);
+    document.querySelector("#research-document").innerHTML = `<span class="kicker">${esc(packet.packetId)}</span><h2>${esc(packet.companyName)}</h2><p class="muted">${esc(packet.exchange)} · ${esc(packet.industry)} · ${esc(packet.currency)}${slotRole ? ` · researched as ${esc(slotRole)}` : ""}</p><div class="research-sections">${packet.sections.map((section) => `<section class="section-card"><span class="kicker">Source-backed section</span><h3>${esc(section.sectionId.replaceAll("_", " "))}</h3>${researchSectionMarkup(section)}<small>Evidence: ${esc(section.evidenceIds.join(", ") || "none")}</small></section>`).join("")}<section class="evidence-wrap"><div class="surface-head"><div><span class="kicker">Provenance</span><h3>Evidence</h3></div><span class="chip">${esc(packet.evidence.length)} ITEMS</span></div><table class="evidence-table"><thead><tr><th>ID</th><th>Source</th><th>Date</th><th>Claim supported</th></tr></thead><tbody>${packet.evidence.map((evidence) => `<tr><td>${esc(evidence.evidenceId)}</td><td>${esc(evidence.sourceType)} · ${esc(evidence.sourceTitle)}</td><td>${esc(evidence.sourceDate)}</td><td>${esc(evidence.claimSupported)}</td></tr>`).join("")}</tbody></table></section></div>`;
   };
   paint(0); target.querySelectorAll("[data-packet-index]").forEach((button) => button.addEventListener("click", () => { target.querySelectorAll("[data-packet-index]").forEach((node) => node.classList.remove("active")); button.classList.add("active"); paint(Number(button.dataset.packetIndex)); }));
 }
@@ -580,6 +615,15 @@ export async function buildResearch({ button = document.querySelector("#build-re
   } catch (error) { refreshStatus = `Research build failed: ${error.message}`; status.textContent = refreshStatus; }
   finally { button.disabled = false; button.textContent = "Build research"; }
 }
+export async function bootstrapOverview({ button = document.querySelector("#bootstrap-overview"), status = document.querySelector("#health-status"), reload = start } = {}) {
+  button.disabled = true; button.textContent = "Bootstrapping OVERVIEW…"; status.textContent = "Filling cached Alpha Vantage OVERVIEW rows…";
+  try {
+    const result = normalizeBootstrapOverview(await apiClient.post("/commands/bootstrap-overview"));
+    refreshStatus = `OVERVIEW bootstrap: fetched ${result.fetched.length} · remaining ${result.remaining.length} · ${result.requestCount} requests`;
+    status.textContent = refreshStatus; await reload();
+  } catch (error) { refreshStatus = `OVERVIEW bootstrap failed: ${error.message}`; status.textContent = refreshStatus; }
+  finally { button.disabled = false; button.textContent = "Bootstrap OVERVIEW"; }
+}
 
 export async function runValueManager({ button = document.querySelector("#run-value-manager"), status = document.querySelector("#health-status"), reload = start, occurredAt = document.querySelector("#value-manager-occurred-at")?.value } = {}) {
   if (!occurredAt) { status.textContent = "Run Value Manager requires a caller-supplied timestamp."; return; }
@@ -629,6 +673,7 @@ export async function executePaperTrade({ decision, button = document.querySelec
 export function bindShellCommands(documentObject = document) {
   documentObject.querySelector("#refresh-prices").addEventListener("click", () => refreshPrices());
   documentObject.querySelector("#build-research").addEventListener("click", () => buildResearch());
+  documentObject.querySelector("#bootstrap-overview").addEventListener("click", () => bootstrapOverview());
 }
 
 if (app) { bindShellCommands(); start(); }
