@@ -17,7 +17,16 @@ from .recommendations import (
     RecommendationEvidenceReference,
     ReviewTrigger,
 )
-from .research import EvidenceItem, ResearchBatch, ResearchPacket, ResearchSection
+from .research import (
+    DerivedMetric,
+    EvidenceItem,
+    MissingData,
+    PacketComponentCoverage,
+    PacketFundamentals,
+    ResearchBatch,
+    ResearchPacket,
+    ResearchSection,
+)
 from .value_manager import ValueManager, ValueManagerDecisionContext
 
 _DEFAULT_MODEL = "gpt-5.6-terra"
@@ -104,8 +113,54 @@ def _serialize_section(section: ResearchSection) -> dict[str, object]:
     }
 
 
+def _serialize_missing(value: MissingData) -> dict[str, object]:
+    return {
+        "missing": True,
+        "reason": value.reason.value,
+        "details": value.details,
+    }
+
+
+def _serialize_metric_value(value: Decimal | MissingData) -> object:
+    if isinstance(value, MissingData):
+        return _serialize_missing(value)
+    return format(value, "f")
+
+
+def _serialize_coverage(item: PacketComponentCoverage) -> dict[str, object]:
+    return {
+        "endpoint": item.endpoint.value,
+        "reuse_status": item.reuse_status.value,
+        "freshness": item.freshness.value,
+        "reliability": item.reliability.value,
+        "fiscal_period": item.fiscal_period.isoformat() if item.fiscal_period is not None else None,
+        "source_date": item.source_date.isoformat() if item.source_date is not None else None,
+        "fetched_at": item.fetched_at.isoformat() if item.fetched_at is not None else None,
+    }
+
+
+def _serialize_derived(metric: DerivedMetric) -> dict[str, object]:
+    return {
+        "metric_id": metric.metric_id,
+        "value": _serialize_metric_value(metric.value),
+        "formula_id": metric.formula_id,
+        "input_keys": list(metric.input_keys),
+        "reliability": metric.reliability.value,
+        "freshness": metric.freshness.value,
+    }
+
+
+def _serialize_fundamentals(fundamentals: PacketFundamentals) -> dict[str, object]:
+    return {
+        "coverage": [_serialize_coverage(item) for item in fundamentals.coverage],
+        "derived": [_serialize_derived(metric) for metric in fundamentals.derived],
+    }
+
+
 def _serialize_packet(packet: ResearchPacket) -> dict[str, object]:
     def _missing_or_text(value: object) -> object:
+        if isinstance(value, MissingData):
+            return _serialize_missing(value)
         if hasattr(value, "reason"):
             return {
                 "missing": True,
@@ -114,7 +169,7 @@ def _serialize_packet(packet: ResearchPacket) -> dict[str, object]:
             }
         return value
 
-    return {
+    payload: dict[str, object] = {
         "packet_id": packet.packet_id,
         "candidate_id": packet.candidate_id,
         "ticker": packet.ticker,
@@ -128,6 +183,9 @@ def _serialize_packet(packet: ResearchPacket) -> dict[str, object]:
         "evidence_items": [_serialize_evidence_item(item) for item in packet.evidence_items],
         "sections": [_serialize_section(section) for section in packet.sections],
     }
+    if packet.fundamentals is not None:
+        payload["fundamentals"] = _serialize_fundamentals(packet.fundamentals)
+    return payload
 
 
 def _serialize_portfolio(portfolio: Portfolio) -> dict[str, object]:
@@ -204,6 +262,11 @@ def _build_prompt(context: ValueManagerDecisionContext) -> tuple[str, str]:
             "Follow the constitution exactly.",
             "Use only the supplied structured decision context and supplied evidence.",
             "Do not invent evidence, citations, portfolio state, or hidden context.",
+            "Derived metrics in packet fundamentals are already computed by deterministic code.",
+            "Do not recompute FCF, EV, TTM, cash conversion, or yield.",
+            "Use the supplied derived values and treat MissingData as explicit absence, not a number to infer.",
+            "Coverage reuse_status makes fetched, reused, missing, or stale evidence explicit.",
+            "Do not use screening rank, rank reason, or slot role; they are not part of this context.",
             "Return exactly one portfolio recommendation and nothing else.",
             "The only allowed actions are BUY and HOLD.",
             "BUY requires a ticker, target_weight, and investment_thesis.",

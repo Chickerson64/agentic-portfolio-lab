@@ -7,22 +7,42 @@ from datetime import datetime, timezone
 from typing import Callable, Protocol, Sequence
 from uuid import uuid4
 
+from agentic_portfolio_lab.application.assemble_research_packets import assemble_research_packet
+from agentic_portfolio_lab.application.refresh_fundamentals import (
+    FundamentalEndpointProvider,
+    RefreshFundamentalsService,
+)
+from agentic_portfolio_lab.application.screen_research import ScreeningService
 from agentic_portfolio_lab.domain.portfolio import SecurityIdentity
-from agentic_portfolio_lab.domain.research import EvidenceItem, MissingData, MissingDataReason, ResearchBatch, ResearchPacket, ResearchSection
-from agentic_portfolio_lab.domain.research_provider import ResearchProvider, SourceResearchDocument, SourceResearchRecord
+from agentic_portfolio_lab.domain.provider_fundamentals import (
+    ProviderEndpoint,
+    ProviderFundamentalRecord,
+    ReuseStatus,
+)
+from agentic_portfolio_lab.domain.research import ResearchBatch, ResearchPacket
+from agentic_portfolio_lab.domain.screening import ScreeningRun
+from agentic_portfolio_lab.domain.universe import CandidateUniverse
+from agentic_portfolio_lab.domain.valuation import PriceObservation
 
 
-class ResearchBatchState(Protocol):
-    def append_research_batch(self, batch: ResearchBatch) -> None: ...
+@dataclass(frozen=True, slots=True)
+class ResearchCycleInputs:
+    """Current-cycle prices and cached fundamental records for screening."""
+
+    price_observations: tuple[PriceObservation, ...]
+    fundamental_records: tuple[ProviderFundamentalRecord, ...]
 
 
-def _missing(label: str) -> MissingData:
-    return MissingData(MissingDataReason.NOT_AVAILABLE, f"provider did not supply {label}")
+class ResearchCycleState(Protocol):
+    def load_research_inputs(self) -> ResearchCycleInputs: ...
 
-
-def _content(values: tuple[tuple[str, str | None], ...]) -> str | MissingData:
-    available = tuple(f"{field}: {value}" for field, value in values if value)
-    return "; ".join(available) if available else _missing(", ".join(field for field, _ in values))
+    def persist_research_cycle(
+        self,
+        *,
+        screening_run: ScreeningRun,
+        fetched_records: Sequence[ProviderFundamentalRecord],
+        batch: ResearchBatch,
+    ) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,45 +51,103 @@ class BuildResearchResult:
     provider_identity: str
 
 
-class BuildResearchService:
-    """Fetch every candidate before one durable append-only state transition."""
+def _require_aware(as_of: datetime) -> datetime:
+    if as_of.tzinfo is None or as_of.utcoffset() is None:
+        raise ValueError("research clock must return a timezone-aware datetime")
+    return as_of
 
-    def __init__(self, *, provider: ResearchProvider, state: ResearchBatchState, candidate_universe: Sequence[SecurityIdentity], now: Callable[[], datetime] | None = None) -> None:
-        self._provider, self._state, self._candidate_universe = provider, state, tuple(candidate_universe)
+
+def _packets_in_universe_order(
+    universe: CandidateUniverse,
+    packets_by_security: dict[SecurityIdentity, ResearchPacket],
+) -> tuple[ResearchPacket, ...]:
+    """Order manager-facing packets by universe identity, not screening rank or slot."""
+    return tuple(
+        packets_by_security[security]
+        for security in universe.identities
+        if security in packets_by_security
+    )
+
+
+def _cycle_price(
+    observations: Sequence[PriceObservation],
+    security: SecurityIdentity,
+) -> PriceObservation:
+    matches = [observation for observation in observations if observation.security == security]
+    if not matches:
+        raise ValueError(f"missing this-cycle price observation for {security.ticker}")
+    latest_at = max(observation.observed_at for observation in matches)
+    latest = tuple(observation for observation in matches if observation.observed_at == latest_at)
+    if len(latest) != 1:
+        raise ValueError(f"ambiguous this-cycle price observations for {security.ticker}")
+    return latest[0]
+
+
+class BuildResearchService:
+    """Screen the universe, refresh selected names, then persist one research cycle."""
+
+    def __init__(
+        self,
+        *,
+        provider: FundamentalEndpointProvider,
+        state: ResearchCycleState,
+        universe: CandidateUniverse,
+        now: Callable[[], datetime] | None = None,
+    ) -> None:
+        self._state = state
+        self._universe = universe
         self._now = now or (lambda: datetime.now(timezone.utc))
+        self._screening = ScreeningService()
+        self._refresh = RefreshFundamentalsService(provider=provider, now=self._now)
 
     def build(self, *, portfolio_id, manager_type: str = "VALUE") -> BuildResearchResult:
-        as_of = self._now()
-        if as_of.tzinfo is None or as_of.utcoffset() is None:
-            raise ValueError("research clock must return a timezone-aware datetime")
-        documents = tuple(self._provider.get_company_research(security) for security in self._candidate_universe)
-        packets = tuple(self._packet(document, as_of) for document in documents)
-        batch = ResearchBatch(
-            batch_id=f"research-{uuid4()}", decision_cycle_id=uuid4(), portfolio_id=portfolio_id,
-            manager_type=manager_type, created_at=self._now(), as_of_timestamp=as_of, packets=packets,
+        as_of = _require_aware(self._now())
+        inputs = self._state.load_research_inputs()
+        screening_run = self._screening.screen(
+            universe=self._universe,
+            price_observations=inputs.price_observations,
+            fundamental_records=inputs.fundamental_records,
+            screening_run_id=uuid4(),
+            as_of=as_of,
         )
-        self._state.append_research_batch(batch)
-        return BuildResearchResult(batch, documents[0].provider_identity)
+        if not screening_run.selected:
+            raise ValueError(
+                "screening selected no eligible priced names; cannot persist an empty research batch"
+            )
 
-    def _packet(self, document: SourceResearchDocument, as_of: datetime) -> ResearchPacket:
-        records = (document.overview.source, document.income_statement.source, document.earnings.source)
-        evidence = tuple(EvidenceItem(
-            evidence_id=f"{document.security.ticker}-{index}-{record.source_date.isoformat()}", source_type=record.source_type,
-            source_title=record.source_title, source_date=record.source_date,
-            claim_supported="Provider-supplied factual fields: " + ", ".join(key for key, value in record.facts if value),
-        ) for index, record in enumerate(records, start=1))
-        sections = (
-            ResearchSection("COMPANY_OVERVIEW", _content((("company_name", document.overview.company_name), ("description", document.overview.description), ("sector", document.overview.sector), ("industry", document.overview.industry))), (evidence[0].evidence_id,)),
-            ResearchSection("VALUATION", _content((("market_cap", document.overview.market_cap), ("pe_ratio", document.overview.pe_ratio), ("peg_ratio", document.overview.peg_ratio), ("price_to_book_ratio", document.overview.price_to_book_ratio), ("eps", document.overview.eps), ("revenue_per_share", document.overview.revenue_per_share), ("profit_margin", document.overview.profit_margin), ("operating_margin", document.overview.operating_margin), ("return_on_equity", document.overview.return_on_equity), ("analyst_target_price", document.overview.analyst_target_price))), (evidence[0].evidence_id,)),
-            ResearchSection("FINANCIALS", _content((("total_revenue", document.income_statement.total_revenue), ("gross_profit", document.income_statement.gross_profit), ("operating_income", document.income_statement.operating_income), ("net_income", document.income_statement.net_income))), (evidence[1].evidence_id,)),
-            ResearchSection("EARNINGS_AND_GROWTH", _content((("reported_eps", document.earnings.reported_eps), ("estimated_eps", document.earnings.estimated_eps), ("surprise", document.earnings.surprise), ("surprise_percentage", document.earnings.surprise_percentage))), (evidence[2].evidence_id,)),
-            ResearchSection("RISKS_AND_LIMITATIONS", _content((("fifty_two_week_high", document.overview.fifty_two_week_high), ("fifty_two_week_low", document.overview.fifty_two_week_low), ("quarterly_revenue_growth", document.overview.quarterly_revenue_growth), ("quarterly_earnings_growth", document.overview.quarterly_earnings_growth), ("beta", document.overview.beta), ("dividend_yield", document.overview.dividend_yield))), (evidence[0].evidence_id,)),
+        fetched_records: list[ProviderFundamentalRecord] = []
+        packets_by_security: dict[SecurityIdentity, ResearchPacket] = {}
+        provider_identity: str | None = None
+        for security in screening_run.selected:
+            price = _cycle_price(inputs.price_observations, security)
+            refresh = self._refresh.refresh(security, inputs.fundamental_records, as_of)
+            fetched_records.extend(
+                status.record
+                for status in refresh.statuses
+                if status.reuse_status is ReuseStatus.FETCHED_THIS_CYCLE
+            )
+            if provider_identity is None:
+                provider_identity = refresh.status_for(ProviderEndpoint.OVERVIEW).record.provider_identity
+            packets_by_security[security] = assemble_research_packet(
+                security=security, refresh=refresh, price=price, as_of=as_of
+            )
+
+        created_at = _require_aware(self._now())
+        batch = ResearchBatch(
+            batch_id=f"research-{uuid4()}",
+            decision_cycle_id=uuid4(),
+            portfolio_id=portfolio_id,
+            manager_type=manager_type,
+            created_at=created_at,
+            as_of_timestamp=as_of,
+            packets=_packets_in_universe_order(self._universe, packets_by_security),
+            screening_run_id=screening_run.screening_run_id,
         )
-        missing_sections = tuple(ResearchSection(f"{section}_{field}_MISSING", _missing(field)) for section, fields in (("COMPANY_OVERVIEW", (("company_name", document.overview.company_name), ("description", document.overview.description), ("sector", document.overview.sector), ("industry", document.overview.industry))), ("VALUATION", (("market_cap", document.overview.market_cap), ("pe_ratio", document.overview.pe_ratio), ("peg_ratio", document.overview.peg_ratio), ("price_to_book_ratio", document.overview.price_to_book_ratio), ("eps", document.overview.eps), ("revenue_per_share", document.overview.revenue_per_share), ("profit_margin", document.overview.profit_margin), ("operating_margin", document.overview.operating_margin), ("return_on_equity", document.overview.return_on_equity), ("analyst_target_price", document.overview.analyst_target_price))), ("FINANCIALS", (("total_revenue", document.income_statement.total_revenue), ("gross_profit", document.income_statement.gross_profit), ("operating_income", document.income_statement.operating_income), ("net_income", document.income_statement.net_income))), ("EARNINGS", (("reported_eps", document.earnings.reported_eps), ("estimated_eps", document.earnings.estimated_eps), ("surprise", document.earnings.surprise), ("surprise_percentage", document.earnings.surprise_percentage))), ("RISKS_AND_LIMITATIONS", (("fifty_two_week_high", document.overview.fifty_two_week_high), ("fifty_two_week_low", document.overview.fifty_two_week_low), ("quarterly_revenue_growth", document.overview.quarterly_revenue_growth), ("quarterly_earnings_growth", document.overview.quarterly_earnings_growth), ("beta", document.overview.beta), ("dividend_yield", document.overview.dividend_yield)))) for field, value in fields if value is None)
-        return ResearchPacket(
-            packet_id=f"packet-{document.security.ticker}-{uuid4()}", candidate_id=document.security.ticker,
-            ticker=document.security.ticker, security_type=document.security.security_type, as_of_timestamp=as_of,
-            evidence_items=evidence, sections=(*sections, *missing_sections), company_name=document.overview.company_name or _missing("company_name"),
-            exchange=document.overview.exchange or _missing("exchange"), currency=document.overview.currency or _missing("currency"),
-            sector=document.overview.sector or _missing("sector"), industry=document.overview.industry or _missing("industry"),
+        self._state.persist_research_cycle(
+            screening_run=screening_run,
+            fetched_records=tuple(fetched_records),
+            batch=batch,
         )
+        if provider_identity is None:
+            raise ValueError("research cycle produced packets without provider identity")
+        return BuildResearchResult(batch, provider_identity)
