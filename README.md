@@ -13,8 +13,8 @@ The current local weekly paper-trading loop includes:
 - durable SQLite local-run state, including paired Cash Event funding;
 - live Twelve Data price refresh for the configured candidate universe plus SPY;
 - mechanical SPY benchmark fulfillment from a persisted provider-attributed quote;
-- Alpha Vantage Research v2: a versioned managed universe (currently the
-  provisional 8-name `VALUE_US_EQUITIES_V1`), a cheap OVERVIEW screen, five
+- Alpha Vantage Research v2: a versioned managed universe (the operator-approved
+  30-name `VALUE_US_EQUITIES_V1` snapshot), a cheap OVERVIEW screen, five
   deep research slots, statement reuse, and derived metrics computed in
   application code;
 - an explicit OVERVIEW bootstrap command that fills missing overview rows at
@@ -34,9 +34,9 @@ identity translation stays inside the adapter. Quote `close` is attributed as
 `twelve-data-quote-close-field`; it is not claimed to be an official
 regular-session close.
 
-The first-week research universe is the provisional 8-name
+The live managed research universe is the operator-approved 30-name
 `VALUE_US_EQUITIES_V1` snapshot. Live price refresh covers that universe plus
-SPY. Expanding the versioned list to ~30 names waits on operator approval.
+SPY.
 
 All financial state transitions are deterministic and traceable through domain
 artifacts. The OpenAI adapter produces recommendations only; it never executes
@@ -44,7 +44,6 @@ trades. There is no autonomous execution.
 
 ## Not implemented / future work
 
-- expanding the versioned managed universe after operator approval;
 - an AI reviewer adapter;
 - SELL, rebalance, or additional AI managers;
 - brokerage integration or real-money execution;

@@ -8,15 +8,16 @@ research, the OpenAI Value Manager, deterministic validation, human approval,
 and managed paper execution. HOLD is a legitimate non-executing terminal
 decision.
 
-Research v2 screening, statement reuse, derived metrics, and operator OVERVIEW
-bootstrap are implemented on this branch. Remaining related work is expanding
-the versioned universe after operator approval, not richer evidence as a
-future research system.
+Research v2 screening, statement reuse, derived metrics, operator OVERVIEW
+bootstrap, and the approved 30-name `value-us-equities-v1` snapshot as the live
+managed universe are implemented on this branch. Remaining related research work
+is additional evidence sources and retrieval adapters, not expanding this
+universe snapshot.
 
 Still later-phase work, not claimed as v0.1:
 
 - export/import backups and a formal operator checklist
-- expanding the versioned managed-research universe after operator approval
+- additional research evidence sources and retrieval adapters
 - AI reviewer adapter
 - additional managers, SELL, and rebalance
 - brokerage, authentication, scheduling, and cloud persistence

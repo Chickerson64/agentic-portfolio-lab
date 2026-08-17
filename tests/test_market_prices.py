@@ -209,7 +209,11 @@ def test_refresh_selects_held_candidates_and_spy_then_applies_one_complete_set()
 
     result = service.refresh((held, CANDIDATE_UNIVERSE[0]))
 
-    assert [security.ticker for security in provider.requested] == ["IBM", "MSFT", "AAPL", "GOOGL", "AMZN", "META", "JPM", "V", "COST", "SPY"]
+    assert [security.ticker for security in provider.requested] == [
+        "IBM",
+        *[security.ticker for security in CANDIDATE_UNIVERSE],
+        "SPY",
+    ]
     assert state.latest_observations == result.observations
     assert result.provider_identity == "fake-provider"
 

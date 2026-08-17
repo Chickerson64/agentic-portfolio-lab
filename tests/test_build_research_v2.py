@@ -242,11 +242,11 @@ def test_screen_refreshes_selected_only_and_skips_unselected():
     result = _service(state, calls).build(portfolio_id=uuid4())
 
     selected = state.screening_runs[0].selected
-    assert len(state.price_observations) == 8
+    assert len(state.price_observations) == len(universe)
     assert len(selected) == 5
     selected_tickers = {security.ticker for security in selected}
     unselected_tickers = {security.ticker for security in universe} - selected_tickers
-    assert len(unselected_tickers) == 3
+    assert len(unselected_tickers) == len(universe) - 5
     fetched_symbols = {symbol for _, symbol in calls}
     assert fetched_symbols == selected_tickers
     assert unselected_tickers.isdisjoint(fetched_symbols)
@@ -283,8 +283,8 @@ def test_manager_packet_order_is_universe_identity_not_screening_selected_order(
     universe_tickers = tuple(
         security.ticker for security in VALUE_US_EQUITIES_V1.identities if security in set(selected)
     )
-    assert selected_tickers == ("COST", "V", "JPM", "AAPL", "AMZN")
-    assert universe_tickers == ("AAPL", "AMZN", "JPM", "V", "COST")
+    assert selected_tickers == ("COST", "V", "JPM", "AAPL", "ABBV")
+    assert universe_tickers == ("AAPL", "JPM", "V", "ABBV", "COST")
     assert selected_tickers != universe_tickers
     assert [by_security[security].slot_role for security in selected] == [
         ResearchSlotRole.RANKED,
@@ -311,7 +311,13 @@ def test_manager_packet_order_is_universe_identity_not_screening_selected_order(
         )
     )
     assert [packet["ticker"] for packet in payload["research_batch"]["packets"]] == list(universe_tickers)
-    assert selected == (by_ticker["COST"], by_ticker["V"], by_ticker["JPM"], by_ticker["AAPL"], by_ticker["AMZN"])
+    assert selected == (
+        by_ticker["COST"],
+        by_ticker["V"],
+        by_ticker["JPM"],
+        by_ticker["AAPL"],
+        by_ticker["ABBV"],
+    )
 
 
 def test_metric_inputs_use_exact_security_identity():

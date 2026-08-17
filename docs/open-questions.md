@@ -9,8 +9,8 @@
 - Market-data and research providers are Twelve Data and Alpha Vantage.
 - Research v2 screening, statement reuse, derived metrics, and operator
   OVERVIEW bootstrap (≤25 requests per invocation) have landed. Rank and slot
-  role stay off the Value Manager payload. Expanding `VALUE_US_EQUITIES_V1`
-  waits on operator approval.
+  role stay off the Value Manager payload. The operator-approved 30-name
+  `VALUE_US_EQUITIES_V1` snapshot is live.
 
 ## Still open
 

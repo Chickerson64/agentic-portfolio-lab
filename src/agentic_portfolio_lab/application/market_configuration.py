@@ -11,11 +11,38 @@ def _equity(ticker: str, exchange: str) -> SecurityIdentity:
 
 
 CANDIDATE_UNIVERSE: tuple[SecurityIdentity, ...] = (
-    _equity("MSFT", "NASDAQ"), _equity("AAPL", "NASDAQ"), _equity("GOOGL", "NASDAQ"), _equity("AMZN", "NASDAQ"),
-    _equity("META", "NASDAQ"), _equity("JPM", "NYSE"), _equity("V", "NYSE"), _equity("COST", "NASDAQ"),
+    _equity("MSFT", "NASDAQ"),
+    _equity("AAPL", "NASDAQ"),
+    _equity("GOOGL", "NASDAQ"),
+    _equity("AMZN", "NASDAQ"),
+    _equity("META", "NASDAQ"),
+    _equity("NVDA", "NASDAQ"),
+    _equity("AVGO", "NASDAQ"),
+    _equity("ORCL", "NYSE"),
+    _equity("CRM", "NYSE"),
+    _equity("JPM", "NYSE"),
+    _equity("V", "NYSE"),
+    _equity("BAC", "NYSE"),
+    _equity("GS", "NYSE"),
+    _equity("BLK", "NYSE"),
+    _equity("UNH", "NYSE"),
+    _equity("JNJ", "NYSE"),
+    _equity("ABBV", "NYSE"),
+    _equity("TMO", "NYSE"),
+    _equity("COST", "NASDAQ"),
+    _equity("WMT", "NASDAQ"),
+    _equity("HD", "NYSE"),
+    _equity("PG", "NYSE"),
+    _equity("KO", "NYSE"),
+    _equity("CAT", "NYSE"),
+    _equity("HON", "NYSE"),
+    _equity("UNP", "NYSE"),
+    _equity("XOM", "NYSE"),
+    _equity("CVX", "NYSE"),
+    _equity("NEE", "NYSE"),
+    _equity("LIN", "NYSE"),
 )
-# Provisional managed-research universe for Research v2. The Lead will propose
-# the final ~30-name operator list for approval; do not expand it here.
+# Operator-approved managed-research universe for Research v2.
 VALUE_US_EQUITIES_V1 = CandidateUniverse(
     universe_version="value-us-equities-v1",
     identities=CANDIDATE_UNIVERSE,
