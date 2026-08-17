@@ -214,7 +214,7 @@ def test_refresh_selects_held_candidates_and_spy_then_applies_one_complete_set()
     assert result.provider_identity == "fake-provider"
 
 
-def test_configured_live_refresh_stays_within_free_tier_without_reducing_research_universe() -> None:
+def test_configured_live_refresh_uses_managed_universe_plus_spy() -> None:
     provider, state = FakeProvider(), InMemoryPriceRefreshState()
     service = RefreshPricesService(
         provider=provider,
@@ -225,11 +225,13 @@ def test_configured_live_refresh_stays_within_free_tier_without_reducing_researc
 
     required = service.required_securities(())
 
-    assert LIVE_PRICE_CANDIDATE_UNIVERSE == RESEARCH_CANDIDATE_UNIVERSE
+    assert LIVE_PRICE_CANDIDATE_UNIVERSE == CANDIDATE_UNIVERSE
     assert len(RESEARCH_CANDIDATE_UNIVERSE) == 5
-    assert len(required) == 6
-    assert len(required) <= TWELVE_DATA_FREE_TIER_REQUEST_LIMIT
+    assert len(required) == len(CANDIDATE_UNIVERSE) + 1
+    assert len(required) > TWELVE_DATA_FREE_TIER_REQUEST_LIMIT
+    assert len(set(required)) == len(required)
     assert required[-1] is SPY_BENCHMARK
+    assert tuple(required[:-1]) == CANDIDATE_UNIVERSE
 
 
 def test_refresh_provider_failure_does_not_partially_apply_state() -> None:
