@@ -445,3 +445,114 @@ def test_reopen_uses_same_database_not_demo_state(tmp_path: Path) -> None:
     assert reopened is not None
     assert reopened.metadata.initialized_at + timedelta(days=1) == INITIALIZED_AT + timedelta(days=1)
     assert reopened.metadata.status == "ACTIVE"
+
+
+def _equity(ticker: str) -> SecurityIdentity:
+    return SecurityIdentity(ticker, "EQUITY", "NASDAQ", "USD")
+
+
+def _screening_run(*tickers: str, selected_tickers: tuple[str, ...] | None = None):
+    from agentic_portfolio_lab.domain.screening import ResearchSlotRole, ScreeningCandidateResult, ScreeningRun
+
+    identities = tuple(_equity(ticker) for ticker in tickers)
+    selected_tickers = tickers[:1] if selected_tickers is None else selected_tickers
+    selected = tuple(_equity(ticker) for ticker in selected_tickers)
+    results = []
+    for identity in identities:
+        if identity in selected:
+            results.append(
+                ScreeningCandidateResult(
+                    security=identity,
+                    eligible=True,
+                    ineligibility_reason=None,
+                    rank_key=("1", identity.ticker),
+                    rank_reason="eligible current-cycle name",
+                    slot_role=ResearchSlotRole.RANKED,
+                )
+            )
+        else:
+            results.append(
+                ScreeningCandidateResult(
+                    security=identity,
+                    eligible=False,
+                    ineligibility_reason="ineligible: missing current-cycle price",
+                    rank_key=(),
+                    rank_reason="ineligible: missing current-cycle price",
+                )
+            )
+    return ScreeningRun(
+        screening_run_id=uuid4(),
+        universe_version="value-us-equities-v1",
+        universe_identities=identities,
+        as_of=INITIALIZED_AT,
+        results=tuple(results),
+        selected=selected,
+    )
+
+
+def _fundamental_record(*, record_id: str = "fund-aapl-overview-1"):
+    from agentic_portfolio_lab.domain.provider_fundamentals import ProviderEndpoint, ProviderFundamentalRecord
+
+    return ProviderFundamentalRecord(
+        record_id=record_id,
+        security=_equity("AAPL"),
+        provider_identity="alpha-vantage",
+        endpoint=ProviderEndpoint.OVERVIEW,
+        fiscal_period=INITIALIZED_AT.date(),
+        source_date=INITIALIZED_AT.date(),
+        fetched_at=INITIALIZED_AT,
+        facts=(("company_name", "Apple"),),
+    )
+
+
+def test_sqlite_appends_screening_run_and_fundamental_record(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    initial = store.initialize_run(initialized_at=INITIALIZED_AT)
+    run = _screening_run("AAPL", "MSFT")
+    record = _fundamental_record()
+
+    store.save_transition(replace(initial, screening_runs=(run,), fundamental_records=(record,)))
+    reopened = store.open_run()
+
+    assert reopened is not None
+    assert reopened.screening_runs == (run,)
+    assert reopened.fundamental_records == (record,)
+
+
+def test_sqlite_rejects_rewriting_persisted_fundamental_record_id(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    initial = store.initialize_run(initialized_at=INITIALIZED_AT)
+    record = _fundamental_record()
+    store.save_transition(replace(initial, fundamental_records=(record,)))
+
+    rewritten = replace(record, facts=(("company_name", "Apple Inc."),))
+    with pytest.raises(ValueError, match="fundamental records must not rewrite persisted artifact"):
+        store.save_transition(replace(store.open_run(), fundamental_records=(rewritten,)))
+
+    reopened = store.open_run()
+    assert reopened is not None
+    assert reopened.fundamental_records == (record,)
+
+
+def test_sqlite_rejects_rewriting_persisted_screening_run_id(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    initial = store.initialize_run(initialized_at=INITIALIZED_AT)
+    run = _screening_run("AAPL", "MSFT")
+    store.save_transition(replace(initial, screening_runs=(run,)))
+
+    rewritten = replace(run, universe_version="value-us-equities-v2")
+    with pytest.raises(ValueError, match="screening runs must not rewrite persisted artifact"):
+        store.save_transition(replace(store.open_run(), screening_runs=(rewritten,)))
+
+
+def test_decode_run_state_fills_missing_screening_and_fundamental_tuples() -> None:
+    state = SQLiteLocalRunStore._initial_state(INITIALIZED_AT)
+    document = encode(state)
+    document["fields"].pop("screening_runs", None)
+    document["fields"].pop("fundamental_records", None)
+
+    decoded = decode_run_state(document)
+
+    assert decoded.screening_runs == ()
+    assert decoded.fundamental_records == ()
+    assert decoded.managed_portfolio == state.managed_portfolio

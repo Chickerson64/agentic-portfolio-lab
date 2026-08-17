@@ -278,3 +278,25 @@ def test_packets_and_batches_remain_separate_models() -> None:
 
     packet = _packet()
     assert not isinstance(packet, ResearchBatch)
+
+
+def test_packet_defaults_fundamentals_and_batch_defaults_screening_run_id() -> None:
+    packet = _packet()
+    batch = _batch()
+
+    assert packet.fundamentals is None
+    assert batch.screening_run_id is None
+
+
+def test_batch_rejects_non_uuid_screening_run_id() -> None:
+    with pytest.raises(TypeError, match="screening_run_id must be a UUID"):
+        ResearchBatch(
+            batch_id="rb_001",
+            decision_cycle_id=uuid4(),
+            portfolio_id=uuid4(),
+            manager_type="VALUE",
+            created_at=datetime(2026, 8, 12, 15, tzinfo=timezone.utc),
+            as_of_timestamp=datetime(2026, 8, 12, 14, tzinfo=timezone.utc),
+            packets=[_packet()],
+            screening_run_id="not-a-uuid",  # type: ignore[arg-type]
+        )

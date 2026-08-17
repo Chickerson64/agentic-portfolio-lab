@@ -195,6 +195,18 @@ class SQLiteLocalRunStore:
             key=lambda fulfillment: fulfillment.fulfillment_id,
             label="benchmark fulfillments",
         )
+        SQLiteLocalRunStore._require_immutable_records(
+            getattr(current, "screening_runs", ()),
+            getattr(proposed, "screening_runs", ()),
+            key=lambda run: run.screening_run_id,
+            label="screening runs",
+        )
+        SQLiteLocalRunStore._require_immutable_records(
+            getattr(current, "fundamental_records", ()),
+            getattr(proposed, "fundamental_records", ()),
+            key=lambda record: record.record_id,
+            label="fundamental records",
+        )
 
     @staticmethod
     def _require_history_prefix(current: tuple[object, ...], proposed: tuple[object, ...], *, label: str) -> None:
@@ -254,6 +266,8 @@ class SQLiteLocalRunStore:
             CREATE TABLE IF NOT EXISTS benchmark_history (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), document TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS history_entries (decision_cycle_id TEXT PRIMARY KEY, document TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS benchmark_fulfillments (fulfillment_id TEXT PRIMARY KEY, document TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS screening_runs (screening_run_id TEXT PRIMARY KEY, document TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS fundamental_records (record_id TEXT PRIMARY KEY, document TEXT NOT NULL);
             """
         )
 
@@ -262,7 +276,7 @@ class SQLiteLocalRunStore:
         return json.dumps(encode(value), separators=(",", ":"), sort_keys=True)
 
     def _replace_index_rows(self, connection: sqlite3.Connection, state: PersistedRunState) -> None:
-        for table in ("portfolio_state", "cash_events", "cash_event_funding", "price_observations", "research_batches", "decision_journals", "approvals", "executions", "managed_history", "benchmark_history", "history_entries", "benchmark_fulfillments"):
+        for table in ("portfolio_state", "cash_events", "cash_event_funding", "price_observations", "research_batches", "decision_journals", "approvals", "executions", "managed_history", "benchmark_history", "history_entries", "benchmark_fulfillments", "screening_runs", "fundamental_records"):
             connection.execute(f"DELETE FROM {table}")
         connection.executemany("INSERT INTO portfolio_state VALUES (?, ?, ?)", (("managed", str(state.managed_portfolio.portfolio_id), self._document(state.managed_portfolio)), ("benchmark", str(state.benchmark_portfolio.portfolio.portfolio_id), self._document(state.benchmark_portfolio))))
         for result in state.funding_results:
@@ -287,6 +301,10 @@ class SQLiteLocalRunStore:
             connection.execute("INSERT INTO history_entries VALUES (?, ?)", (str(entry.journal_entry.decision_cycle_id), self._document(entry)))
         for fulfillment in state.benchmark_fulfillments:
             connection.execute("INSERT INTO benchmark_fulfillments VALUES (?, ?)", (str(fulfillment.fulfillment_id), self._document(fulfillment)))
+        for run in getattr(state, "screening_runs", ()):
+            connection.execute("INSERT INTO screening_runs VALUES (?, ?)", (str(run.screening_run_id), self._document(run)))
+        for record in getattr(state, "fundamental_records", ()):
+            connection.execute("INSERT INTO fundamental_records VALUES (?, ?)", (record.record_id, self._document(record)))
 
     @staticmethod
     def _initial_state(initialized_at: datetime) -> PersistedRunState:

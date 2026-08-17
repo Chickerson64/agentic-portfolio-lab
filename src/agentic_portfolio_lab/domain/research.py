@@ -8,11 +8,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date, datetime
+from decimal import Decimal
 from enum import StrEnum
 from typing import Final
 from uuid import UUID
 
 from .portfolio import _canonical_upper_text, _require_aware_datetime, _require_date, _require_non_empty_text
+from .provider_fundamentals import FreshnessClass, ProviderEndpoint, ReliabilityClass, ReuseStatus
 
 
 class MissingDataReason(StrEnum):
@@ -134,6 +136,7 @@ class ResearchPacket:
     currency: str | MissingData = UNKNOWN_MISSING
     sector: str | MissingData = UNKNOWN_MISSING
     industry: str | MissingData = UNKNOWN_MISSING
+    fundamentals: PacketFundamentals | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "packet_id", _require_identifier(self.packet_id, field_name="packet_id"))
@@ -181,6 +184,102 @@ class ResearchPacket:
             if unknown_evidence_ids:
                 raise ValueError("section evidence_ids must reference evidence_items in this packet")
         object.__setattr__(self, "sections", sections)
+        if self.fundamentals is not None and not isinstance(self.fundamentals, PacketFundamentals):
+            raise TypeError("fundamentals must be PacketFundamentals or None")
+
+
+@dataclass(frozen=True, slots=True)
+class PacketComponentCoverage:
+    """Per-endpoint reuse and provenance attached to a research packet."""
+
+    endpoint: ProviderEndpoint
+    reuse_status: ReuseStatus
+    freshness: FreshnessClass
+    reliability: ReliabilityClass
+    fiscal_period: date | None
+    source_date: date | None
+    fetched_at: datetime | None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.endpoint, ProviderEndpoint):
+            raise TypeError("endpoint must be a ProviderEndpoint")
+        if not isinstance(self.reuse_status, ReuseStatus):
+            raise TypeError("reuse_status must be a ReuseStatus")
+        if not isinstance(self.freshness, FreshnessClass):
+            raise TypeError("freshness must be a FreshnessClass")
+        if not isinstance(self.reliability, ReliabilityClass):
+            raise TypeError("reliability must be a ReliabilityClass")
+        if self.fiscal_period is not None:
+            _require_date(self.fiscal_period, field_name="fiscal_period")
+        if self.source_date is not None:
+            _require_date(self.source_date, field_name="source_date")
+        if self.fetched_at is not None:
+            _require_aware_datetime(self.fetched_at, field_name="fetched_at")
+        if self.reuse_status is ReuseStatus.MISSING and self.freshness is not FreshnessClass.UNKNOWN:
+            raise ValueError("MISSING coverage freshness must be UNKNOWN")
+        if self.reuse_status in {ReuseStatus.FETCHED_THIS_CYCLE, ReuseStatus.REUSED_CURRENT}:
+            if self.fetched_at is None or self.source_date is None:
+                raise ValueError("FETCHED_THIS_CYCLE and REUSED_CURRENT coverage require fetched_at and source_date")
+
+
+@dataclass(frozen=True, slots=True)
+class DerivedMetric:
+    """A named derived metric placeholder; formulas land in a later lane."""
+
+    metric_id: str
+    value: Decimal | MissingData
+    formula_id: str
+    input_keys: tuple[str, ...] | list[str]
+    reliability: ReliabilityClass
+    freshness: FreshnessClass
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "metric_id", _require_identifier(self.metric_id, field_name="metric_id"))
+        if not isinstance(self.value, (Decimal, MissingData)):
+            raise TypeError("value must be a Decimal or MissingData")
+        if isinstance(self.value, Decimal) and not self.value.is_finite():
+            raise ValueError("value must be finite")
+        object.__setattr__(self, "formula_id", _require_identifier(self.formula_id, field_name="formula_id"))
+        if not isinstance(self.input_keys, (tuple, list)):
+            raise TypeError("input_keys must be a tuple or list of strings")
+        input_keys = tuple(_require_identifier(item, field_name="input_keys item") for item in self.input_keys)
+        if len(set(input_keys)) != len(input_keys):
+            raise ValueError("input_keys must not contain duplicates")
+        object.__setattr__(self, "input_keys", input_keys)
+        if not isinstance(self.reliability, ReliabilityClass):
+            raise TypeError("reliability must be a ReliabilityClass")
+        if not isinstance(self.freshness, FreshnessClass):
+            raise TypeError("freshness must be a FreshnessClass")
+        if isinstance(self.value, Decimal) and self.reliability is not ReliabilityClass.DERIVED_DETERMINISTIC:
+            raise ValueError("present derived metrics must use DERIVED_DETERMINISTIC reliability")
+
+
+@dataclass(frozen=True, slots=True)
+class PacketFundamentals:
+    """Endpoint coverage and derived metrics later attached to a ResearchPacket."""
+
+    coverage: tuple[PacketComponentCoverage, ...] | list[PacketComponentCoverage]
+    derived: tuple[DerivedMetric, ...] | list[DerivedMetric] = ()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.coverage, (tuple, list)):
+            raise TypeError("coverage must be a tuple or list of PacketComponentCoverage instances")
+        coverage = tuple(self.coverage)
+        if not all(isinstance(item, PacketComponentCoverage) for item in coverage):
+            raise TypeError("coverage must contain PacketComponentCoverage instances")
+        endpoints = tuple(item.endpoint for item in coverage)
+        if len(set(endpoints)) != len(endpoints):
+            raise ValueError("coverage must not contain duplicate endpoints")
+        object.__setattr__(self, "coverage", coverage)
+        if not isinstance(self.derived, (tuple, list)):
+            raise TypeError("derived must be a tuple or list of DerivedMetric instances")
+        derived = tuple(self.derived)
+        if not all(isinstance(item, DerivedMetric) for item in derived):
+            raise TypeError("derived must contain DerivedMetric instances")
+        metric_ids = tuple(item.metric_id for item in derived)
+        if len(set(metric_ids)) != len(metric_ids):
+            raise ValueError("derived must not contain duplicate metric_id values")
+        object.__setattr__(self, "derived", derived)
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,6 +293,7 @@ class ResearchBatch:
     created_at: datetime
     as_of_timestamp: datetime
     packets: tuple[ResearchPacket, ...] | list[ResearchPacket]
+    screening_run_id: UUID | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "batch_id", _require_identifier(self.batch_id, field_name="batch_id"))
@@ -202,6 +302,8 @@ class ResearchBatch:
         if not isinstance(self.portfolio_id, UUID):
             raise TypeError("portfolio_id must be a UUID")
         object.__setattr__(self, "manager_type", _canonical_upper_text(self.manager_type, field_name="manager_type"))
+        if self.screening_run_id is not None and not isinstance(self.screening_run_id, UUID):
+            raise TypeError("screening_run_id must be a UUID")
         created_at = _require_aware_datetime(self.created_at, field_name="created_at")
         as_of_timestamp = _require_aware_datetime(self.as_of_timestamp, field_name="as_of_timestamp")
         if created_at < as_of_timestamp:

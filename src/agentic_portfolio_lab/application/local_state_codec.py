@@ -7,7 +7,7 @@ and field values are represented with JSON-safe primitives.
 
 from __future__ import annotations
 
-from dataclasses import fields, is_dataclass, replace
+from dataclasses import MISSING, fields, is_dataclass, replace
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
@@ -17,16 +17,29 @@ from uuid import UUID
 from .local_state import LocalRunMetadata, PersistedRunState
 
 
+def _apply_dataclass_defaults(model_type: type[object], decoded_fields: dict[str, Any]) -> dict[str, Any]:
+    """Fill omitted dataclass fields from defaults so older documents still decode."""
+    completed = dict(decoded_fields)
+    for item in fields(model_type):
+        if item.name in completed:
+            continue
+        if item.default is not MISSING:
+            completed[item.name] = item.default
+        elif item.default_factory is not MISSING:
+            completed[item.name] = item.default_factory()
+    return completed
+
+
 def _types() -> dict[str, type[object]]:
     # Imports are intentionally explicit: only known local domain/application
     # artifacts may be rehydrated from a durable database document.
     from agentic_portfolio_lab.dashboard import DecisionHistoryArtifacts
-    from agentic_portfolio_lab.domain import approval, benchmark_fulfillment, cash_events, constitution, journal, performance, portfolio, recommendations, research, reviewer, risk_validation, simulated_execution, trades, valuation, value_manager, value_manager_workflow
+    from agentic_portfolio_lab.domain import approval, benchmark_fulfillment, cash_events, constitution, journal, performance, portfolio, provider_fundamentals, recommendations, research, research_provider, reviewer, risk_validation, screening, simulated_execution, trades, universe, valuation, value_manager, value_manager_workflow
 
     modules = (
         approval, benchmark_fulfillment, cash_events, constitution, journal, performance, portfolio,
-        recommendations, research, reviewer, risk_validation, simulated_execution,
-        trades, valuation, value_manager, value_manager_workflow,
+        provider_fundamentals, recommendations, research, research_provider, reviewer, risk_validation,
+        screening, simulated_execution, trades, universe, valuation, value_manager, value_manager_workflow,
     )
     registry = {
         f"{LocalRunMetadata.__module__}.{LocalRunMetadata.__qualname__}": LocalRunMetadata,
@@ -90,6 +103,7 @@ def decode(value: Any) -> Any:
     if not isinstance(raw_fields, dict):
         raise ValueError("persisted dataclass document is missing fields")
     decoded_fields = {name: decode(item) for name, item in raw_fields.items()}
+    decoded_fields = _apply_dataclass_defaults(model_type, decoded_fields)
     # A history panel requires its approval to reference its exact in-memory
     # journal instance. Recreate that local edge before its constructor checks
     # run; decode_run_state later canonicalizes it to the aggregate journal.
@@ -254,6 +268,8 @@ def decode_run_state(value: Any) -> PersistedRunState:
         executions=executions,
         history_entries=history_entries,
         benchmark_fulfillments=canonical_fulfillments,
+        screening_runs=getattr(state, "screening_runs", ()),
+        fundamental_records=getattr(state, "fundamental_records", ()),
         benchmark_fulfillment_status=getattr(state, "benchmark_fulfillment_status", "PENDING_NO_ELIGIBLE_PRICE"),
     )
 

@@ -36,7 +36,26 @@ from .recommendations import (
 )
 from .openai_value_manager import OpenAIValueManager, OpenAIValueManagerMetadata
 from .risk_validation import DeterministicRiskValidator, RiskRuleResult, RiskValidationResult, RiskValidationStatus
-from .research import EvidenceItem, MissingData, MissingDataReason, ResearchBatch, ResearchPacket, ResearchSection
+from .research import (
+    DerivedMetric,
+    EvidenceItem,
+    MissingData,
+    MissingDataReason,
+    PacketComponentCoverage,
+    PacketFundamentals,
+    ResearchBatch,
+    ResearchPacket,
+    ResearchSection,
+)
+from .provider_fundamentals import (
+    FreshnessClass,
+    ProviderEndpoint,
+    ProviderFundamentalRecord,
+    ReliabilityClass,
+    ReuseStatus,
+)
+from .screening import ResearchSlotRole, ScreeningCandidateResult, ScreeningRun
+from .universe import CandidateUniverse
 from .reviewer import (
     AIReviewer,
     AIReviewerReviewContext,
@@ -68,6 +87,7 @@ __all__ = [
     "CashEventFundingResult",
     "CashEventFundingWorkflow",
     "CashBalance",
+    "CandidateUniverse",
     "ConstitutionLoader",
     "ConstitutionVersion",
     "NEXT_APPLICABLE_REGULAR_SESSION_CLOSE",
@@ -80,8 +100,10 @@ __all__ = [
     "DecisionCycleResult",
     "DecisionCycleStage",
     "DecisionJournalEntry",
+    "DerivedMetric",
     "EvidenceItem",
     "ExecutedTrade",
+    "FreshnessClass",
     "MissingData",
     "MissingDataReason",
     "Portfolio",
@@ -101,6 +123,7 @@ __all__ = [
     "ResearchBatch",
     "ResearchPacket",
     "ResearchSection",
+    "ResearchSlotRole",
     "AIReviewer",
     "AIReviewerReviewContext",
     "ReviewDecision",
@@ -114,10 +137,18 @@ __all__ = [
     "ReviewTriggerType",
     "OpenAIValueManager",
     "OpenAIValueManagerMetadata",
+    "PacketComponentCoverage",
+    "PacketFundamentals",
+    "ProviderEndpoint",
+    "ProviderFundamentalRecord",
+    "ReliabilityClass",
+    "ReuseStatus",
     "RiskRuleResult",
     "RiskValidationResult",
     "RiskValidationStatus",
     "SecurityIdentity",
+    "ScreeningCandidateResult",
+    "ScreeningRun",
     "SimulatedExecutionResult",
     "SimulatedExecutionWorkflow",
     "TradeProposal",

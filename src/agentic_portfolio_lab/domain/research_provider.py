@@ -38,6 +38,8 @@ class SourceResearchDocument:
     overview: "NormalizedOverviewFacts"
     income_statement: "NormalizedIncomeFacts"
     earnings: "NormalizedEarningsFacts"
+    balance_sheet: "NormalizedBalanceFacts | None" = None
+    cash_flow: "NormalizedCashFlowFacts | None" = None
 
 @dataclass(frozen=True, slots=True)
 class NormalizedIncomeFacts:
@@ -86,6 +88,29 @@ class NormalizedOverviewFacts:
     beta: str | None
     dividend_yield: str | None
     latest_quarter: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class NormalizedBalanceFacts:
+    source: SourceResearchRecord
+    fiscal_date_ending: str | None
+    reported_currency: str | None
+    cash: str | None
+    debt: str | None
+    current_assets: str | None
+    current_liabilities: str | None
+    shares_outstanding: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class NormalizedCashFlowFacts:
+    source: SourceResearchRecord
+    fiscal_date_ending: str | None
+    reported_currency: str | None
+    operating_cash_flow: str | None
+    capex: str | None
+    buybacks: str | None
+    issuance: str | None
 
 
 class ResearchProvider(Protocol):

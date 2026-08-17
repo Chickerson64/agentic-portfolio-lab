@@ -13,7 +13,9 @@ from agentic_portfolio_lab.domain.benchmark_fulfillment import PassiveIndexFulfi
 from agentic_portfolio_lab.domain.cash_events import CashEvent, CashEventFundingResult
 from agentic_portfolio_lab.domain.journal import DecisionJournalEntry
 from agentic_portfolio_lab.domain.performance import BenchmarkPerformanceHistory, PortfolioPerformanceHistory
+from agentic_portfolio_lab.domain.provider_fundamentals import ProviderFundamentalRecord
 from agentic_portfolio_lab.domain.research import ResearchBatch
+from agentic_portfolio_lab.domain.screening import ScreeningRun
 from agentic_portfolio_lab.domain.simulated_execution import SimulatedExecutionResult
 from agentic_portfolio_lab.domain.valuation import BenchmarkPortfolio, PriceObservation
 from agentic_portfolio_lab.domain.portfolio import Portfolio
@@ -53,6 +55,8 @@ class PersistedRunState:
     executions: tuple[SimulatedExecutionResult, ...] = ()
     history_entries: tuple[DecisionHistoryArtifacts, ...] = ()
     benchmark_fulfillments: tuple[PassiveIndexFulfillment, ...] = ()
+    screening_runs: tuple[ScreeningRun, ...] = ()
+    fundamental_records: tuple[ProviderFundamentalRecord, ...] = ()
     benchmark_fulfillment_status: str = "PENDING_NO_ELIGIBLE_PRICE"
 
     def __post_init__(self) -> None:
@@ -66,7 +70,7 @@ class PersistedRunState:
             raise TypeError("managed_history must be a PortfolioPerformanceHistory")
         if not isinstance(self.benchmark_history, BenchmarkPerformanceHistory):
             raise TypeError("benchmark_history must be a BenchmarkPerformanceHistory")
-        for name in ("funding_results", "price_observations", "research_batches", "journal_entries", "approvals", "executions", "history_entries", "benchmark_fulfillments"):
+        for name in ("funding_results", "price_observations", "research_batches", "journal_entries", "approvals", "executions", "history_entries", "benchmark_fulfillments", "screening_runs", "fundamental_records"):
             value = getattr(self, name, ())
             if not isinstance(value, tuple):
                 raise TypeError(f"{name} must be a tuple")
@@ -74,6 +78,7 @@ class PersistedRunState:
         self._validate_funding()
         self._validate_decision_graph()
         self._validate_benchmark_fulfillments()
+        self._validate_screening_and_fundamentals()
         if getattr(self, "benchmark_fulfillment_status", "PENDING_NO_ELIGIBLE_PRICE") not in {
             "FULFILLED", "NO_ACTION_ZERO_CASH", "NO_ACTION_INSUFFICIENT_BUYING_POWER", "PENDING_NO_ELIGIBLE_PRICE",
         }:
@@ -242,12 +247,27 @@ class PersistedRunState:
             if entry is None or entry.executed_trade is not execution.executed_trade:
                 raise ValueError("every persisted execution must appear in one canonical history entry")
 
+    def _validate_screening_and_fundamentals(self) -> None:
+        screening_runs = tuple(getattr(self, "screening_runs", ()))
+        if not all(isinstance(item, ScreeningRun) for item in screening_runs):
+            raise TypeError("screening_runs must contain ScreeningRun instances")
+        screening_ids = tuple(item.screening_run_id for item in screening_runs)
+        if len(set(screening_ids)) != len(screening_ids):
+            raise ValueError("screening_runs must not contain duplicate identities")
+        fundamental_records = tuple(getattr(self, "fundamental_records", ()))
+        if not all(isinstance(item, ProviderFundamentalRecord) for item in fundamental_records):
+            raise TypeError("fundamental_records must contain ProviderFundamentalRecord instances")
+        record_ids = tuple(item.record_id for item in fundamental_records)
+        if len(set(record_ids)) != len(record_ids):
+            raise ValueError("fundamental_records must not contain duplicate identities")
+
     def validate(self) -> None:
         """Validate aggregate coherence before a persistence transaction."""
         self._validate_current_history()
         self._validate_funding()
         self._validate_decision_graph()
         self._validate_benchmark_fulfillments()
+        self._validate_screening_and_fundamentals()
         self._validate_benchmark_status()
 
     @property
