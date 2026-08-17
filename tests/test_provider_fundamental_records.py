@@ -223,6 +223,8 @@ def test_source_research_document_defaults_new_statement_fields() -> None:
     assert document.cash_flow is None
     balance = NormalizedBalanceFacts(_source(), "2026-06-30", "USD", "50", "10", "80", "20", "1000")
     cash_flow = NormalizedCashFlowFacts(_source(), "2026-06-30", "USD", "30", "-5", "1", "0")
+    assert balance.periods == ()
+    assert cash_flow.periods == ()
     with_statements = SourceResearchDocument(
         security=_security(),
         provider_identity="alpha-vantage",
