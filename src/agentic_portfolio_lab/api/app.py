@@ -11,13 +11,14 @@ from agentic_portfolio_lab.dashboard_demo import build_demo_dashboard_data
 from agentic_portfolio_lab.application.market_configuration import LIVE_PRICE_CANDIDATE_UNIVERSE, SPY_BENCHMARK, VALUE_US_EQUITIES_V1
 from agentic_portfolio_lab.application.refresh_prices import InMemoryPriceRefreshState, RefreshPricesService
 from agentic_portfolio_lab.application.build_research import BuildResearchService
+from agentic_portfolio_lab.application.bootstrap_overview import BootstrapOverviewService
 from agentic_portfolio_lab.infrastructure.alpha_vantage import AlphaVantageResearchProvider
 from agentic_portfolio_lab.application.wave2_commands import BenchmarkFulfillmentService, CashEventService
 from agentic_portfolio_lab.application.decision_commands import DecisionApprovalService, RunValueManagerService
 from agentic_portfolio_lab.domain.openai_value_manager import OpenAIValueManager
 from agentic_portfolio_lab.domain.value_manager import ValueManager
 from agentic_portfolio_lab.application.managed_execution import ManagedPaperExecutionService
-from agentic_portfolio_lab.infrastructure.sqlite_local_state import SQLiteLocalRunStore, SQLiteMvpReadState, SQLitePriceRefreshState, SQLiteResearchBatchState
+from agentic_portfolio_lab.infrastructure.sqlite_local_state import SQLiteLocalRunStore, SQLiteMvpReadState, SQLiteOverviewBootstrapState, SQLitePriceRefreshState, SQLiteResearchBatchState
 from agentic_portfolio_lab.infrastructure.twelve_data import TwelveDataMarketPriceProvider
 
 from .queries import MvpReadState, MvpReadStateSnapshot
@@ -30,6 +31,7 @@ def create_app(
     database_path: str | None = None,
     refresh_service: RefreshPricesService | None = None,
     research_service: BuildResearchService | None = None,
+    bootstrap_overview_service: BootstrapOverviewService | None = None,
     cash_event_service: CashEventService | None = None,
     benchmark_fulfillment_service: BenchmarkFulfillmentService | None = None,
     value_manager: ValueManager | None = None,
@@ -70,11 +72,17 @@ def create_app(
         state=SQLiteResearchBatchState(store) if store is not None else _UnavailableResearchState(),
         universe=VALUE_US_EQUITIES_V1,
     )
+    overview_bootstrap = bootstrap_overview_service or BootstrapOverviewService(
+        provider=AlphaVantageResearchProvider(),
+        state=SQLiteOverviewBootstrapState(store) if store is not None else _UnavailableOverviewState(),
+        universe=VALUE_US_EQUITIES_V1,
+    )
     app.include_router(
         create_router(
             source,
             refresh_service=service,
             research_service=research,
+            bootstrap_overview_service=overview_bootstrap,
             cash_event_service=cash_event_service or (CashEventService(store) if store is not None else None),
             benchmark_fulfillment_service=benchmark_fulfillment_service
             or (BenchmarkFulfillmentService(store) if store is not None else None),
@@ -95,6 +103,14 @@ class _UnavailableResearchState:
 
     def persist_research_cycle(self, *, screening_run, fetched_records, batch) -> None:
         raise ValueError("research persistence requires AGENTIC_PORTFOLIO_LAB_DB_PATH")
+
+
+class _UnavailableOverviewState:
+    def load_fundamental_records(self):
+        raise ValueError("overview bootstrap requires AGENTIC_PORTFOLIO_LAB_DB_PATH")
+
+    def persist_overview_record(self, record) -> None:
+        raise ValueError("overview bootstrap requires AGENTIC_PORTFOLIO_LAB_DB_PATH")
 
 
 app = create_app()

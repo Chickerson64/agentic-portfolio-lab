@@ -37,7 +37,10 @@ Cursor, and any other agent working in this repository.
 
 v0.1.0 is the tagged known-good baseline. v0.1 is a local weekly paper-trading loop:
 
-- One Value Manager, one Alpha Vantage ResearchBatch, deterministic validation, human approval, and simulated managed execution.
+- One Value Manager, screened five-slot Alpha Vantage Research v2 (cheap
+  OVERVIEW screen over the versioned universe, five deep slots, statement
+  reuse, derived metrics in application code), deterministic validation, human
+  approval, and simulated managed execution.
 - Durable SQLite local-run state. Do not commit the database or provider keys.
 - Twelve Data prices and a mechanical SPY benchmark (`SPY` / `NYSE ARCA` / `ETF` / `USD`).
 - FastAPI plus the Variant C operator UI. The frontend must not own financial calculations or execution policy.

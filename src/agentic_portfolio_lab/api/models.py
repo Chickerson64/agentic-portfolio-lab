@@ -17,6 +17,7 @@ from agentic_portfolio_lab.domain.journal import DecisionJournalEntry
 from agentic_portfolio_lab.domain.performance import PerformanceComparison, PerformanceSnapshot
 from agentic_portfolio_lab.domain.portfolio import SecurityIdentity
 from agentic_portfolio_lab.domain.research import MissingData, ResearchBatch, ResearchPacket
+from agentic_portfolio_lab.domain.screening import ScreeningRun
 from agentic_portfolio_lab.domain.trades import ExecutedTrade
 
 
@@ -223,6 +224,13 @@ class ResearchPacketResponse(ApiModel):
     sections: tuple[ResearchSectionResponse, ...]
 
 
+class ScreeningSelectionResponse(ApiModel):
+    """Operator-only audit of why a name was researched. Rank is never included."""
+
+    security: SecurityResponse
+    slot_role: str
+
+
 class ResearchBatchResponse(ApiModel):
     batch_id: str
     decision_cycle_id: str
@@ -231,6 +239,8 @@ class ResearchBatchResponse(ApiModel):
     created_at: str
     as_of_timestamp: str
     packets: tuple[ResearchPacketResponse, ...]
+    screening_run_id: str | None = None
+    selected: tuple[ScreeningSelectionResponse, ...] = ()
 
 
 class HistoryExecutionResponse(ApiModel):
@@ -307,6 +317,14 @@ class BuildResearchResponse(ApiModel):
     packet_count: int
     source_provider_identity: str
     as_of_timestamp: str
+
+
+class BootstrapOverviewResponse(ApiModel):
+    fetched: tuple[SecurityResponse, ...]
+    skipped: tuple[SecurityResponse, ...]
+    remaining: tuple[SecurityResponse, ...]
+    request_count: int
+    provider_identity: str
 
 
 class CashEventCommand(ApiModel):
@@ -616,7 +634,19 @@ def _research_packet_response(packet: ResearchPacket) -> ResearchPacketResponse:
     )
 
 
-def research_batch_response(batch: ResearchBatch) -> ResearchBatchResponse:
+def research_batch_response(
+    batch: ResearchBatch, screening_run: ScreeningRun | None = None
+) -> ResearchBatchResponse:
+    selected: tuple[ScreeningSelectionResponse, ...] = ()
+    if screening_run is not None:
+        results_by_security = {result.security: result for result in screening_run.results}
+        selected = tuple(
+            ScreeningSelectionResponse(
+                security=security_response(identity),
+                slot_role=results_by_security[identity].slot_role.value,
+            )
+            for identity in screening_run.selected
+        )
     return ResearchBatchResponse(
         batch_id=batch.batch_id,
         decision_cycle_id=str(batch.decision_cycle_id),
@@ -625,6 +655,8 @@ def research_batch_response(batch: ResearchBatch) -> ResearchBatchResponse:
         created_at=_timestamp(batch.created_at),
         as_of_timestamp=_timestamp(batch.as_of_timestamp),
         packets=tuple(_research_packet_response(packet) for packet in batch.packets),
+        screening_run_id=None if batch.screening_run_id is None else str(batch.screening_run_id),
+        selected=selected,
     )
 
 

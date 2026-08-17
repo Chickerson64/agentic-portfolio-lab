@@ -151,6 +151,8 @@ def test_research_and_history_responses_expose_immutable_artifact_metadata() -> 
     history_body = history.json()
     assert research_body["decision_cycle_id"] == "00000000-0000-0000-0000-000000000021"
     assert research_body["packets"][0]["evidence"][0]["evidence_id"] == "demo_ev_001"
+    assert research_body["screening_run_id"] is None
+    assert research_body["selected"] == []
     assert history_body["entries_newest_first"][0]["action"] == "HOLD"
     assert history_body["entries_newest_first"][0]["execution"]["status"] == "No execution — HOLD"
     assert history_body["entries_newest_first"][1]["action"] == "BUY"

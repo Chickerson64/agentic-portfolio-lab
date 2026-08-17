@@ -122,9 +122,15 @@ v0.1 providers are Twelve Data (prices), Alpha Vantage (research), and OpenAI
 (Value Manager). Provider-specific identity translation stays at adapter
 boundaries. Canonical SPY remains `SPY` / `NYSE ARCA` / `ETF` / `USD`.
 
+Research uses the Research v2 weekly assembly: screen the versioned managed
+universe, refresh selected names with statement reuse, and persist one
+`ResearchBatch`. An operator OVERVIEW bootstrap fills missing cache rows at
+most 25 requests per invocation. Slot allocation and rank stay on the
+screening audit record; they are not manager input. See ADR-007.
+
 HOLD is a valid terminal manager decision. Managed paper execution requires
 deterministic validation, human approval, and backend executable readiness.
 There is no autonomous execution.
 
-Not in v0.1: additional managers, an AI reviewer adapter, Research v2 depth,
-brokerage integration, scheduling, authentication, and cloud persistence.
+Not in v0.1: additional managers, an AI reviewer adapter, brokerage
+integration, scheduling, authentication, and cloud persistence.

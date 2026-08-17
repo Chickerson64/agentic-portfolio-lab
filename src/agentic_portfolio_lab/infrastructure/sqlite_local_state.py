@@ -15,7 +15,7 @@ from agentic_portfolio_lab.application.build_research import ResearchCycleInputs
 from agentic_portfolio_lab.application.local_state import LocalRunMetadata, PersistedRunState
 from agentic_portfolio_lab.application.market_configuration import SPY_BENCHMARK
 from agentic_portfolio_lab.application.local_state_codec import decode_run_state, encode
-from agentic_portfolio_lab.domain.provider_fundamentals import ProviderFundamentalRecord
+from agentic_portfolio_lab.domain.provider_fundamentals import ProviderEndpoint, ProviderFundamentalRecord
 from agentic_portfolio_lab.domain.research import ResearchBatch
 from agentic_portfolio_lab.domain.screening import ScreeningRun
 from agentic_portfolio_lab.dashboard import DecisionHistoryArtifacts
@@ -428,6 +428,36 @@ class SQLiteResearchBatchState:
         )
 
 
+class SQLiteOverviewBootstrapState:
+    """Append OVERVIEW records without a research batch or screening run."""
+
+    def __init__(self, store: SQLiteLocalRunStore) -> None:
+        if not isinstance(store, SQLiteLocalRunStore):
+            raise TypeError("store must be a SQLiteLocalRunStore")
+        self._store = store
+
+    def _require_run(self) -> PersistedRunState:
+        current = self._store.open_run()
+        if current is None:
+            raise ValueError("local SQLite run has not been initialized")
+        return current
+
+    def load_fundamental_records(self) -> tuple[ProviderFundamentalRecord, ...]:
+        return self._require_run().fundamental_records
+
+    def persist_overview_record(self, record: ProviderFundamentalRecord) -> None:
+        if not isinstance(record, ProviderFundamentalRecord):
+            raise TypeError("record must be a ProviderFundamentalRecord")
+        if record.endpoint is not ProviderEndpoint.OVERVIEW:
+            raise ValueError("overview bootstrap may persist OVERVIEW records only")
+        current = self._require_run()
+        if any(existing.record_id == record.record_id for existing in current.fundamental_records):
+            raise ValueError("fundamental record must not rewrite a persisted record")
+        self._store.save_transition(
+            replace(current, fundamental_records=(*current.fundamental_records, record))
+        )
+
+
 class SQLiteMvpReadState:
     """Read adapter: SQLite details stay outside the FastAPI query/domain layers."""
 
@@ -455,6 +485,7 @@ class SQLiteMvpReadState:
             history_entries=state.history_entries,
             source_metadata=self.source_metadata,
             research_batches=state.research_batches,
+            screening_runs=state.screening_runs,
             benchmark_fulfillments=state.benchmark_fulfillments,
             benchmark_fulfillment_status=getattr(state, "benchmark_fulfillment_status", "PENDING_NO_ELIGIBLE_PRICE"),
         )

@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from agentic_portfolio_lab.application.refresh_prices import RefreshPricesService
 from agentic_portfolio_lab.application.build_research import BuildResearchService
+from agentic_portfolio_lab.application.bootstrap_overview import BootstrapOverviewService
 from agentic_portfolio_lab.application.wave2_commands import BenchmarkFulfillmentService, CashEventService
 from agentic_portfolio_lab.application.decision_commands import DecisionApprovalService, DecisionCommandConflict, RunValueManagerService
 from agentic_portfolio_lab.domain.approval import ApprovalDecision
@@ -27,6 +28,7 @@ from .models import (
     ResearchBatchResponse,
     PriceRefreshResponse,
     BuildResearchResponse,
+    BootstrapOverviewResponse,
     CashEventCommand,
     CashEventResponse,
     BenchmarkFulfillmentResponse,
@@ -34,6 +36,7 @@ from .models import (
     RunValueManagerCommand,
     decision_memo_response,
     ExecutePaperTradeResponse,
+    security_response,
 )
 from .queries import LatestResourceNotFound, MvpQueryService, MvpReadState
 
@@ -55,6 +58,7 @@ def create_router(
     *,
     refresh_service: RefreshPricesService,
     research_service: BuildResearchService,
+    bootstrap_overview_service: BootstrapOverviewService,
     cash_event_service: CashEventService | None = None,
     benchmark_fulfillment_service: BenchmarkFulfillmentService | None = None,
     run_value_manager_service: RunValueManagerService | None = None,
@@ -100,6 +104,24 @@ def create_router(
         except (IndexError, ValueError) as error:
             raise HTTPException(status_code=503, detail={"code": "research_unavailable", "message": str(error)}) from error
         return BuildResearchResponse(batch_id=result.batch.batch_id, decision_cycle_id=str(result.batch.decision_cycle_id), packet_count=len(result.batch.packets), source_provider_identity=result.provider_identity, as_of_timestamp=result.batch.as_of_timestamp.isoformat())
+
+    @router.post("/commands/bootstrap-overview", response_model=BootstrapOverviewResponse)
+    def bootstrap_overview() -> BootstrapOverviewResponse:
+        try:
+            result = bootstrap_overview_service.bootstrap()
+        except ResearchProviderConfigurationError as error:
+            raise HTTPException(status_code=503, detail={"code": "research_provider_configuration", "message": str(error)}) from error
+        except ResearchProviderError as error:
+            raise HTTPException(status_code=502, detail={"code": "research_provider_unavailable", "message": str(error)}) from error
+        except (IndexError, ValueError) as error:
+            raise HTTPException(status_code=503, detail={"code": "overview_bootstrap_unavailable", "message": str(error)}) from error
+        return BootstrapOverviewResponse(
+            fetched=tuple(security_response(security) for security in result.fetched),
+            skipped=tuple(security_response(security) for security in result.skipped),
+            remaining=tuple(security_response(security) for security in result.remaining),
+            request_count=result.request_count,
+            provider_identity=result.provider_identity,
+        )
 
     @router.post("/commands/cash-events", response_model=CashEventResponse)
     def cash_event(command: CashEventCommand) -> CashEventResponse:

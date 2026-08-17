@@ -33,6 +33,10 @@ and derived FCF/EV math land in later lanes. Lane 3 weekly assembly now screens
 `ResearchBatch.screening_run_id` in one append-only transition. Rank, slot
 role, and `screening_run_id` stay off the Value Manager LLM payload.
 
+Operator OVERVIEW bootstrap and the weekly screen → refresh-selected → assemble
+loop have landed. Rank and slot role are still not sent to the Value Manager.
+The operator API may show selected slot roles for audit only.
+
 ## Consequences
 
 - Old `ResearchPacket` and `PersistedRunState` documents remain reopenable.

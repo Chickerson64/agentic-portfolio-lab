@@ -12,8 +12,10 @@ const {
   normalizeHistory,
   normalizePriceRefresh,
   normalizeBuildResearch,
+  normalizeBootstrapOverview,
   refreshPrices,
   buildResearch,
+  bootstrapOverview,
   runValueManager,
   recordDecisionOutcome,
   executePaperTrade,
@@ -105,7 +107,19 @@ const researchView = normalizeResearch(research());
 assert.equal(researchView.packets[0].candidateId, "candidate-1");
 assert.equal(researchView.packets[0].evidence[0].sourceDate, "2026-08-10");
 assert.equal(researchView.packets[0].evidence[0].claimSupported, "Cash generation continued.");
+assert.equal(researchView.screeningRunId, null);
+assert.deepEqual(researchView.selected, []);
 assert.equal(normalizeResearch(null), null);
+const researched = normalizeResearch({
+  ...research(),
+  screening_run_id: "screen-1",
+  selected: [{ security: security("MSFT"), slot_role: "RANKED" }],
+});
+assert.equal(researched.screeningRunId, "screen-1");
+assert.equal(researched.selected[0].slotRole, "RANKED");
+assert.equal(researched.selected[0].security.ticker, "MSFT");
+assert.equal("rank_key" in researched.selected[0], false);
+assert.equal("rankKey" in researched.selected[0], false);
 
 const historyView = normalizeHistory(history());
 assert.equal(historyView.entries[0].execution.status, "No execution — HOLD");
@@ -121,6 +135,22 @@ assert.deepEqual(
 assert.deepEqual(
   normalizeBuildResearch({ batch_id: "batch-1", decision_cycle_id: "cycle-1", packet_count: 5, source_provider_identity: "alpha-vantage", as_of_timestamp: "2026-08-13T20:00:00+00:00" }),
   { batchId: "batch-1", decisionCycleId: "cycle-1", packetCount: 5, provider: "alpha-vantage", asOfTimestamp: "2026-08-13T20:00:00+00:00" },
+);
+assert.deepEqual(
+  normalizeBootstrapOverview({
+    fetched: [security("MSFT")],
+    skipped: [security("AAPL")],
+    remaining: [security("GOOGL")],
+    request_count: 1,
+    provider_identity: "alpha-vantage",
+  }),
+  {
+    fetched: [{ ticker: "MSFT", securityType: "EQUITY", exchange: "NASDAQ", currency: "USD" }],
+    skipped: [{ ticker: "AAPL", securityType: "EQUITY", exchange: "NASDAQ", currency: "USD" }],
+    remaining: [{ ticker: "GOOGL", securityType: "EQUITY", exchange: "NASDAQ", currency: "USD" }],
+    requestCount: 1,
+    providerIdentity: "alpha-vantage",
+  },
 );
 
 const deferred = () => {
@@ -173,6 +203,18 @@ assert.equal(buildReloads, 1); assert.equal(buildButton.disabled, false); assert
 globalThis.fetch = async () => ({ ok:false, status:502, json:async()=>({detail:{message:"source failed"}}) });
 await buildResearch({ button: buildButton, status: buildStatus, reload: async () => { throw new Error("must not reload"); } });
 assert.equal(buildButton.disabled, false); assert.equal(buildStatus.textContent, "Research build failed: source failed");
+
+const bootstrapButton = { disabled: false, textContent: "Bootstrap OVERVIEW" }, bootstrapStatus = { textContent: "" }, pendingBootstrap = deferred();
+let bootstrapReloads = 0;
+globalThis.fetch = async (url, options) => { assert.equal(new URL(url).pathname, "/commands/bootstrap-overview"); assert.equal(options.method, "POST"); return pendingBootstrap.promise; };
+const bootstrapping = bootstrapOverview({ button: bootstrapButton, status: bootstrapStatus, reload: async () => { bootstrapReloads += 1; } });
+assert.equal(bootstrapButton.disabled, true); assert.equal(bootstrapButton.textContent, "Bootstrapping OVERVIEW…");
+pendingBootstrap.resolve({ ok: true, json: async () => ({ fetched: [security("MSFT"), security("AAPL")], skipped: [], remaining: [security("GOOGL")], request_count: 2, provider_identity: "alpha-vantage" }) });
+await bootstrapping;
+assert.equal(bootstrapReloads, 1); assert.equal(bootstrapButton.disabled, false); assert.match(bootstrapStatus.textContent, /OVERVIEW bootstrap: fetched 2 · remaining 1 · 2 requests/);
+globalThis.fetch = async () => ({ ok:false, status:503, json:async()=>({detail:{message:"overview bootstrap requires AGENTIC_PORTFOLIO_LAB_DB_PATH"}}) });
+await bootstrapOverview({ button: bootstrapButton, status: bootstrapStatus, reload: async () => { throw new Error("must not reload"); } });
+assert.equal(bootstrapButton.disabled, false); assert.match(bootstrapStatus.textContent, /OVERVIEW bootstrap failed: overview bootstrap requires AGENTIC_PORTFOLIO_LAB_DB_PATH/);
 
 const runButton = { disabled: false, textContent: "Run Value Manager" }, runStatus = { textContent: "" };
 let runReloads = 0;
@@ -242,10 +284,16 @@ const shellBuildButton = {
   listener: null,
   addEventListener(type, listener) { assert.equal(type, "click"); this.listener = listener; },
 };
+const shellBootstrapButton = {
+  disabled: false,
+  textContent: "Bootstrap OVERVIEW",
+  listener: null,
+  addEventListener(type, listener) { assert.equal(type, "click"); this.listener = listener; },
+};
 const shellStatus = { textContent: "" };
 globalThis.document = {
   querySelector(selector) {
-    return { "#refresh-prices": shellRefreshButton, "#build-research": shellBuildButton, "#health-status": shellStatus }[selector] ?? null;
+    return { "#refresh-prices": shellRefreshButton, "#build-research": shellBuildButton, "#bootstrap-overview": shellBootstrapButton, "#health-status": shellStatus }[selector] ?? null;
   },
 };
 bindShellCommands(globalThis.document);
@@ -259,6 +307,11 @@ await shellBuildButton.listener({ button: 0, type: "click" });
 assert.equal(shellBuildButton.disabled, false);
 assert.equal(shellBuildButton.textContent, "Build research");
 assert.equal(shellStatus.textContent, "Research build failed: research provider unavailable");
+globalThis.fetch = async () => ({ ok: false, status: 503, json: async () => ({ detail: { message: "overview bootstrap requires AGENTIC_PORTFOLIO_LAB_DB_PATH" } }) });
+await shellBootstrapButton.listener({ button: 0, type: "click" });
+assert.equal(shellBootstrapButton.disabled, false);
+assert.equal(shellBootstrapButton.textContent, "Bootstrap OVERVIEW");
+assert.match(shellStatus.textContent, /OVERVIEW bootstrap failed: overview bootstrap requires AGENTIC_PORTFOLIO_LAB_DB_PATH/);
 delete globalThis.document;
 
 const originalFetch = globalThis.fetch;
