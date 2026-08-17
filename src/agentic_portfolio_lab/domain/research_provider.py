@@ -50,6 +50,7 @@ class NormalizedIncomeFacts:
     gross_profit: str | None
     operating_income: str | None
     net_income: str | None
+    periods: tuple["NormalizedIncomeFacts", ...] = ()
 
 @dataclass(frozen=True, slots=True)
 class NormalizedEarningsFacts:
@@ -88,6 +89,8 @@ class NormalizedOverviewFacts:
     beta: str | None
     dividend_yield: str | None
     latest_quarter: str | None
+    shares_outstanding: str | None = None
+    price_to_sales: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,6 +103,7 @@ class NormalizedBalanceFacts:
     current_assets: str | None
     current_liabilities: str | None
     shares_outstanding: str | None
+    periods: tuple["NormalizedBalanceFacts", ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,6 +115,7 @@ class NormalizedCashFlowFacts:
     capex: str | None
     buybacks: str | None
     issuance: str | None
+    periods: tuple["NormalizedCashFlowFacts", ...] = ()
 
 
 class ResearchProvider(Protocol):
