@@ -108,6 +108,7 @@ def test_v2_balance_sheet_maps_latest_quarter_and_cash_fallback():
     security = RESEARCH_CANDIDATE_UNIVERSE[0]
     primary = _v2_provider((_balance(),)).fetch_balance_sheet(security)
     assert primary.cash == "80"
+    assert primary.cash_field == "cashAndCashEquivalentsAtCarryingValue"
     assert primary.debt == "25"
     assert primary.current_assets == "120"
     assert primary.current_liabilities == "40"
@@ -116,8 +117,8 @@ def test_v2_balance_sheet_maps_latest_quarter_and_cash_fallback():
     assert primary.reported_currency == "USD"
     assert len(primary.periods) == 1
     assert primary.periods[0].periods == ()
-    assert all(key != "cash_field" for key, _ in primary.source.facts)
-    fallback = _v2_provider((
+    assert ("cash_field", "cashAndCashEquivalentsAtCarryingValue") in primary.source.facts
+    preferred = _v2_provider((
         _balance(quarterlyReports=[{
             "fiscalDateEnding": "2026-06-30",
             "reportedCurrency": "USD",
@@ -128,10 +129,11 @@ def test_v2_balance_sheet_maps_latest_quarter_and_cash_fallback():
             "commonStockSharesOutstanding": "1000",
         }]),
     )).fetch_balance_sheet(security)
-    assert fallback.cash == "70"
-    assert fallback.debt is None
-    assert ("cash_field", "cashAndShortTermInvestments") in fallback.source.facts
-    assert "N/A" not in " ".join(value for _, value in fallback.source.facts)
+    assert preferred.cash == "70"
+    assert preferred.cash_field == "cashAndShortTermInvestments"
+    assert preferred.debt is None
+    assert ("cash_field", "cashAndShortTermInvestments") in preferred.source.facts
+    assert "N/A" not in " ".join(value for _, value in preferred.source.facts)
 
 
 def test_v2_cash_flow_maps_latest_quarter():

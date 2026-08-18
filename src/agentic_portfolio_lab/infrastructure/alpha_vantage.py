@@ -6,6 +6,7 @@ import json
 import os
 import time
 from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
 from typing import Callable, Mapping, cast
 from urllib.parse import urlencode
 from urllib.request import urlopen
@@ -107,6 +108,7 @@ class AlphaVantageResearchProvider:
             latest.current_liabilities,
             latest.shares_outstanding,
             periods,
+            cash_field=latest.cash_field,
         )
 
     def fetch_cash_flow(self, security: SecurityIdentity, *, as_of: datetime | None = None) -> NormalizedCashFlowFacts:
@@ -258,13 +260,35 @@ class AlphaVantageResearchProvider:
             self._optional(report, "netIncome"),
         )
 
+    @staticmethod
+    def _parse_amount(value: str) -> Decimal | None:
+        try:
+            return Decimal(value)
+        except InvalidOperation:
+            return None
+
+    @staticmethod
+    def _format_cash_amount(value: Decimal) -> str:
+        formatted = format(value, "f")
+        if formatted.endswith(".0"):
+            return formatted[:-2]
+        return formatted
+
     def _cash_from_report(self, report: Mapping[str, object]) -> tuple[str | None, str | None]:
-        primary = self._optional(report, "cashAndCashEquivalentsAtCarryingValue")
-        if primary is not None:
-            return primary, None
-        fallback = self._optional(report, "cashAndShortTermInvestments")
-        if fallback is not None:
-            return fallback, "cashAndShortTermInvestments"
+        preferred = self._optional(report, "cashAndShortTermInvestments")
+        if preferred is not None and self._parse_amount(preferred) is not None:
+            return preferred, "cashAndShortTermInvestments"
+        cce_raw = self._optional(report, "cashAndCashEquivalentsAtCarryingValue")
+        sti_raw = self._optional(report, "shortTermInvestments")
+        cce = self._parse_amount(cce_raw) if cce_raw is not None else None
+        sti = self._parse_amount(sti_raw) if sti_raw is not None else None
+        if cce is not None and sti is not None:
+            return (
+                self._format_cash_amount(cce + sti),
+                "cashAndCashEquivalentsAtCarryingValue+shortTermInvestments",
+            )
+        if cce is not None:
+            return cce_raw, "cashAndCashEquivalentsAtCarryingValue"
         return None, None
 
     def _balance_from_report(self, report: Mapping[str, object]) -> NormalizedBalanceFacts:
@@ -276,7 +300,7 @@ class AlphaVantageResearchProvider:
             "current_liabilities": self._optional(report, "totalCurrentLiabilities"),
             "shares_outstanding": self._optional(report, "commonStockSharesOutstanding"),
         }
-        if cash_field is not None:
+        if cash is not None:
             values["cash_field"] = cash_field
         source = self._record(
             "ALPHA_VANTAGE_BALANCE_SHEET",
@@ -293,6 +317,7 @@ class AlphaVantageResearchProvider:
             self._optional(report, "totalCurrentAssets"),
             self._optional(report, "totalCurrentLiabilities"),
             self._optional(report, "commonStockSharesOutstanding"),
+            cash_field=cash_field,
         )
 
     def _cash_flow_from_report(self, report: Mapping[str, object]) -> NormalizedCashFlowFacts:

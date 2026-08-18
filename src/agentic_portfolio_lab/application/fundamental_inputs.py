@@ -80,6 +80,8 @@ def fundamental_metric_inputs_from_records(
     cash_flow = _facts(_latest_record(records, ProviderEndpoint.CASH_FLOW, security))
     latest_shares = _fact(balance, "period_0_shares_outstanding")
     return FundamentalMetricInputs(
+        # period_0_cash is cash_for_net_debt when cash_field is present; legacy
+        # records without cash_field keep CCE-era cash. Do not invent STI here.
         cash=_fact(balance, "period_0_cash"),
         total_debt=_fact(balance, "period_0_debt"),
         current_assets=_fact(balance, "period_0_current_assets"),

@@ -24,6 +24,11 @@ def _compute(operation: Callable[[], Decimal]) -> Decimal:
 
 @dataclass(frozen=True, slots=True)
 class FundamentalMetricInputs:
+    """Inputs for locked derived metrics.
+
+    ``cash`` is cash_for_net_debt (see ADR-007), not cash-and-equivalents alone.
+    """
+
     cash: Decimal | None = None
     total_debt: Decimal | None = None
     current_assets: Decimal | None = None

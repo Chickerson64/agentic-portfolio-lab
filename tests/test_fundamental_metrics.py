@@ -158,6 +158,23 @@ def test_share_count_change_and_ev_and_yield_are_explicitly_missing():
     assert isinstance(metrics["fcf_yield"].value, MissingData)
 
 
+def test_negative_net_debt_stays_present_and_feeds_enterprise_value():
+    metrics = _by_id(
+        derive_fundamental_metrics(
+            FundamentalMetricInputs(
+                cash=Decimal("40"),
+                total_debt=Decimal("10"),
+                price=Decimal("2"),
+                statement_shares=Decimal("50"),
+            )
+        )
+    )
+
+    assert metrics["net_debt"].value == Decimal("-30")
+    assert not isinstance(metrics["net_debt"].value, MissingData)
+    assert metrics["enterprise_value"].value == Decimal("70")
+
+
 def test_freshness_inherits_the_worst_supplied_input():
     metrics = _by_id(
         derive_fundamental_metrics(

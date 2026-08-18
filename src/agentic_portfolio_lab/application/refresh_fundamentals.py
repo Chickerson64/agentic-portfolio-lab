@@ -41,6 +41,7 @@ _BALANCE_PERIOD_FIELDS = (
     "current_assets",
     "current_liabilities",
     "shares_outstanding",
+    "cash_field",
 )
 _CASH_FLOW_PERIOD_FIELDS = (
     "fiscal_date_ending",

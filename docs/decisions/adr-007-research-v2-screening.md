@@ -39,6 +39,40 @@ The operator API may show selected slot roles for audit only. The
 operator-approved 30-name `VALUE_US_EQUITIES_V1` snapshot is now the live
 managed universe.
 
+## Research v2 net-debt / EV cash and debt
+
+Derived `net_debt` and `enterprise_value` use cash_for_net_debt, not packet
+`cash_and_equivalents` (CCE-only). The locked cash waterfall is:
+
+1. Preferred: Alpha Vantage `cashAndShortTermInvestments`, used as-is when present.
+   Do not recompute it from cash-and-equivalents plus short-term investments.
+2. Fallback: `cashAndCashEquivalentsAtCarryingValue + shortTermInvestments` when
+   both addends are valid parsed amounts. Do not add one side alone.
+3. Degraded fallback: `cashAndCashEquivalentsAtCarryingValue` alone.
+
+Persist `cash_field` whenever cash is present so reopen can tell which definition
+produced the amount. Stable tokens:
+
+- `cashAndShortTermInvestments`
+- `cashAndCashEquivalentsAtCarryingValue+shortTermInvestments`
+- `cashAndCashEquivalentsAtCarryingValue`
+
+Total debt stays Alpha Vantage `shortLongTermDebtTotal`. Do not reconstruct face
+notes. Do not subtract leases. That field may include finance and operating lease
+liabilities and may differ materially from issuer-reported long-term debt/notes.
+
+Formulas (unchanged arithmetically):
+
+- `net_debt = total_debt - cash_for_net_debt`
+- `enterprise_value = market_cap + net_debt`
+
+Negative net debt is valid and stays PRESENT. Do not clamp, reject, or convert it
+to `NOT_AVAILABLE`.
+
+Legacy BALANCE_SHEET records without `cash_field` are CCE-era cash. The mapper
+still uses `period_0_cash` and does not invent short-term investments. Do not
+rewrite immutable historical artifacts.
+
 ## Consequences
 
 - Old `ResearchPacket` and `PersistedRunState` documents remain reopenable.

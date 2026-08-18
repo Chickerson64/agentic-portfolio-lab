@@ -95,6 +95,13 @@ class NormalizedOverviewFacts:
 
 @dataclass(frozen=True, slots=True)
 class NormalizedBalanceFacts:
+    """Normalized quarterly balance facts.
+
+    ``cash`` is cash_for_net_debt (ADR-007), not cash-and-equivalents alone.
+    ``cash_field`` names the Alpha Vantage definition that produced ``cash``.
+    It is last so existing positional constructors keep ``periods`` as the 9th argument.
+    """
+
     source: SourceResearchRecord
     fiscal_date_ending: str | None
     reported_currency: str | None
@@ -104,6 +111,7 @@ class NormalizedBalanceFacts:
     current_liabilities: str | None
     shares_outstanding: str | None
     periods: tuple["NormalizedBalanceFacts", ...] = ()
+    cash_field: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

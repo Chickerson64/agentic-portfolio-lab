@@ -126,7 +126,8 @@ Research uses the Research v2 weekly assembly: screen the versioned managed
 universe, refresh selected names with statement reuse, and persist one
 `ResearchBatch`. An operator OVERVIEW bootstrap fills missing cache rows at
 most 25 requests per invocation. Slot allocation and rank stay on the
-screening audit record; they are not manager input. See ADR-007.
+screening audit record; they are not manager input. See ADR-007 for screening
+contracts and the locked net-debt/EV cash and debt convention.
 
 HOLD is a valid terminal manager decision. Managed paper execution requires
 deterministic validation, human approval, and backend executable readiness.

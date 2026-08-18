@@ -219,6 +219,13 @@ Each Research Packet should include the balance-sheet facts needed to judge fina
 - `interest_expense` if available
 - `balance_sheet_as_of`
 
+Packet `cash_and_equivalents` remains the cash-and-equivalents fact for the
+manager-facing packet. Research v2 derived `net_debt` and `enterprise_value`
+use a separate cash_for_net_debt input (preferred
+`cashAndShortTermInvestments`, then CCE+STI, then CCE-only). See ADR-007.
+Those derived values must not be treated as if they subtracted CCE-only cash
+from `shortLongTermDebtTotal`.
+
 ### Why it exists
 
 - leverage and liquidity affect downside risk
@@ -295,6 +302,9 @@ Each Research Packet should include the current valuation facts used by the mana
 - `free_cash_flow_yield` if available
 - `price_to_book` if available
 - `valuation_as_of`
+
+Research v2 `enterprise_value` is `market_cap + net_debt`, and that `net_debt`
+uses cash_for_net_debt rather than packet `cash_and_equivalents`. See ADR-007.
 
 ### Why it exists
 
