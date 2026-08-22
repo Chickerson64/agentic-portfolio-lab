@@ -43,7 +43,7 @@ APPROVED_VALUE_US_EQUITIES_V1: tuple[tuple[str, str], ...] = (
     ("PG", "NYSE"),
     ("KO", "NYSE"),
     ("CAT", "NYSE"),
-    ("HON", "NYSE"),
+    ("HON", "NASDAQ"),
     ("UNP", "NYSE"),
     ("XOM", "NYSE"),
     ("CVX", "NYSE"),

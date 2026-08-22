@@ -35,7 +35,7 @@ CANDIDATE_UNIVERSE: tuple[SecurityIdentity, ...] = (
     _equity("PG", "NYSE"),
     _equity("KO", "NYSE"),
     _equity("CAT", "NYSE"),
-    _equity("HON", "NYSE"),
+    _equity("HON", "NASDAQ"),
     _equity("UNP", "NYSE"),
     _equity("XOM", "NYSE"),
     _equity("CVX", "NYSE"),
