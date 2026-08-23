@@ -52,6 +52,11 @@ It does not pass or fail a trade, cap a weight, or manufacture a replacement
 weight. A mechanically valid 80% or 100% target is representable. Confidence is
 descriptive and has no sizing or safety authority.
 
+The current action contract remains BUY/HOLD only. Extreme concentration is
+therefore representable only when a funded long-only BUY can express it; SELL,
+multi-leg liquidation, and portfolio rotation remain deferred rather than being
+silently inferred from a target weight.
+
 The conceptual advisory artifact is:
 
 ```text
