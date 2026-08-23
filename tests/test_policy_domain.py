@@ -7,12 +7,18 @@ from uuid import uuid4
 
 import pytest
 
-from agentic_portfolio_lab.domain.constitution import ConstitutionLoader
+from agentic_portfolio_lab.domain.constitution import ConstitutionLoader, ConstitutionVersion
 from agentic_portfolio_lab.domain.policy import (
+    BalanceSheetPolicy,
+    CashDeploymentPolicy,
+    DiversificationPolicy,
     EvidenceBand,
     EvidenceCoverageAssessment,
     InvestmentConstitutionArtifact,
+    InvestmentConstitutionCompatibility,
     InvestmentConstitutionReference,
+    LiquidityPolicy,
+    ManagerRiskPersonality,
     PolicyLoader,
     PositionSizingCase,
     RiskConstitutionVersion,
@@ -215,6 +221,10 @@ def _investment_reference() -> InvestmentConstitutionReference:
     return InvestmentConstitutionReference.from_constitution(ConstitutionLoader.load_value_manager_constitution())
 
 
+def _investment_reference_v2() -> InvestmentConstitutionReference:
+    return InvestmentConstitutionReference.from_constitution(ConstitutionLoader.load_value_manager_constitution_v2())
+
+
 def test_canonical_policy_json_sorts_keys_and_normalizes_decimals_for_hashing() -> None:
     payload = {"zeta": Decimal("0.10"), "alpha": Decimal("-0.000"), "nested": {"beta": Decimal("1.2300")}}
 
@@ -368,6 +378,145 @@ def test_value_v1_artifact_locks_every_approved_policy_value() -> None:
     assert enhanced.maximum_initial_target_weight == Decimal("0.15")
     assert risk.sizing_limits.maximum_total_single_name_target_weight == Decimal("0.25")
     assert risk.sizing_limits.maximum_one_cycle_add_weight == Decimal("0.05")
+
+
+def test_value_v2_reframes_starter_size_and_evidence_as_advisory_without_mutating_v1() -> None:
+    investment = _investment_reference()
+    legacy = PolicyLoader.load_value_manager_risk_constitution_v1(
+        compatible_investment_constitution=investment
+    )
+    advisory = PolicyLoader.load_value_manager_risk_constitution_v2(
+        compatible_investment_constitution=_investment_reference_v2()
+    )
+
+    assert legacy.risk_constitution_version.value == "value-risk-v1.0.0"
+    assert legacy.content_hash == "d455809836600fc8a23bafdbd8dd5a075ccbc886ecf71878260cb1964ac31626"
+    assert advisory.risk_constitution_version.value == "value-risk-v2.0.0"
+    assert _investment_reference_v2().content_hash == "0723adf9f759dc03f38a6b584e1942967bdceac31a4117fa2c534a2e440b4bb9"
+    assert advisory.content_hash == "74e76913247ac727b3c1a0390cfe88345224d8f09dd69b51512bb3d0e048788e"
+    assert advisory.compatible_with(_investment_reference_v2())
+    assert not advisory.compatible_with(investment)
+    assert advisory.sizing_guidance.typical_starter_weight_min == Decimal("0.05")
+    assert advisory.sizing_guidance.typical_starter_weight_max == Decimal("0.10")
+    assert not advisory.sizing_guidance.confidence_has_sizing_authority
+    assert advisory.sizing_limits is None
+    assert advisory.risk_personality is not None
+    assert advisory.risk_personality.advisory_only
+    assert all(profile.maximum_initial_target_weight is None for profile in advisory.evidence_bands)
+
+    with localcontext() as context:
+        context.prec = 6
+        low_precision_hash = stable_policy_hash(advisory.artifact_payload(for_hash=True))
+    with localcontext() as context:
+        context.prec = 50
+        high_precision_hash = stable_policy_hash(advisory.artifact_payload(for_hash=True))
+
+    assert low_precision_hash == high_precision_hash == advisory.content_hash
+
+
+def test_advisory_policy_can_represent_growth_eighty_percent_concentration() -> None:
+    value_advisory = PolicyLoader.load_value_manager_risk_constitution_v2(
+        compatible_investment_constitution=_investment_reference_v2()
+    )
+    growth = replace(
+        value_advisory,
+        risk_constitution_version=RiskConstitutionVersion("growth-risk-v1.0.0"),
+        manager_type="GROWTH",
+        compatible_investment_constitutions=(
+            InvestmentConstitutionCompatibility(
+                constitution_version=ConstitutionVersion("growth-v1.0.0"),
+                content_hash="a" * 64,
+            ),
+        ),
+        sizing_guidance=SizingGuidance(
+            typical_starter_weight_min=Decimal("0.20"),
+            typical_starter_weight_max=Decimal("0.80"),
+            minimum_cash_reserve=None,
+            confidence_has_sizing_authority=False,
+        ),
+        risk_personality=ManagerRiskPersonality(
+            summary="Aggressive growth strategy that accepts volatility and concentration.",
+            concentration_guidance="High concentration may be intentional when asymmetric upside is well supported.",
+            turnover_guidance="Large thesis-driven rotations may be intentional.",
+            cash_guidance="Cash is optional when compelling growth opportunities exist.",
+            deviation_expectations=("Explain the durability and downside of an exceptional allocation.",),
+            reviewer_focus=("Challenge growth durability and asymmetric-downside assumptions.",),
+        ),
+        content_hash=None,
+    )
+
+    security = _security()
+    observation = _observation(security=security)
+    portfolio = _portfolio()
+    coverage = EvidenceCoverageAssessment.evaluate(
+        _packet(security=security),
+        security=security,
+        band_definitions=growth.evidence_bands,
+    )
+    snapshot = RiskEvaluationSnapshot.from_state(
+        portfolio=portfolio,
+        valuation=_valuation(portfolio, observation),
+        security=security,
+        price_observation=observation,
+        evidence_coverage=coverage,
+        proposed_target_weight=Decimal("0.80"),
+    )
+
+    assert growth.manager_type == "GROWTH"
+    assert growth.sizing_limits is None
+    assert growth.risk_personality is not None and growth.risk_personality.advisory_only
+    assert snapshot.proposed_target_weight == Decimal("0.80")
+    assert snapshot.proposed_post_trade_position_value == Decimal("800.00")
+    assert snapshot.proposed_post_trade_cash_value == Decimal("200.00")
+
+
+def test_advisory_risk_constitutions_reject_all_retained_hard_policy_knobs() -> None:
+    advisory = PolicyLoader.load_value_manager_risk_constitution_v2(
+        compatible_investment_constitution=_investment_reference_v2()
+    )
+
+    with pytest.raises(ValueError, match="hard minimum cash reserve"):
+        replace(
+            advisory,
+            cash_deployment_policy=CashDeploymentPolicy(minimum_cash_reserve=Decimal("0.30")),
+            content_hash=None,
+        )
+    with pytest.raises(ValueError, match="balance-sheet thresholds"):
+        replace(
+            advisory,
+            balance_sheet_policy=BalanceSheetPolicy(deterministic_leverage_threshold_enabled=True),
+            content_hash=None,
+        )
+    with pytest.raises(ValueError, match="liquidity threshold"):
+        replace(
+            advisory,
+            liquidity_policy=LiquidityPolicy(deterministic_threshold_enabled=True),
+            content_hash=None,
+        )
+    with pytest.raises(ValueError, match="hard concentration cap"):
+        replace(
+            advisory,
+            diversification_policy=DiversificationPolicy(
+                universal_concentration_cap_below_full_weight=Decimal("0.25")
+            ),
+            content_hash=None,
+        )
+
+
+def test_value_v2_evidence_profile_reports_coverage_without_weight_authority() -> None:
+    risk = PolicyLoader.load_value_manager_risk_constitution_v2(
+        compatible_investment_constitution=_investment_reference_v2()
+    )
+
+    assessment = EvidenceCoverageAssessment.evaluate(
+        _packet(),
+        security=_security(),
+        band_definitions=risk.evidence_bands,
+    )
+
+    assert assessment.baseline_qualified
+    assert assessment.eligible_band is EvidenceBand.BASELINE_RESEARCH_V2
+    assert all(item.maximum_initial_target_weight is None for item in assessment.assessed_bands)
 
 
 def test_stale_overview_or_unknown_metric_set_disqualifies_baseline_band() -> None:

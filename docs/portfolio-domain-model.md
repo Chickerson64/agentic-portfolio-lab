@@ -51,10 +51,11 @@ These assumptions keep the model implementation-oriented without choosing storag
 - benchmark tracking should use the same contribution events and valuation timing as the live portfolio
 - benchmark tracking and live portfolio valuation use the same approved price source and convention within a decision cycle
 
-## Accepted manager-risk extension (not yet implemented)
+## Accepted manager-risk extension (not yet activated)
 
-ADR-008 adds a two-layer deterministic risk contract after v0.1. The current
-domain types and SQLite codec do not yet implement these concepts.
+ADR-008 separates hard universal safety from advisory manager risk personality.
+Lane 1 provides typed domain artifacts, but the current workflow and SQLite
+codec do not yet activate or persist them.
 
 ### System Safety Envelope
 
@@ -67,11 +68,12 @@ Reusing a version for changed content is invalid.
 
 ### Manager Risk Constitution
 
-Each AI-managed portfolio selects a repository-owned typed risk artifact by
-manager type and portfolio mandate. The artifact has an independent version,
+Each AI-managed portfolio selects a repository-owned typed advisory artifact by
+manager type and portfolio identity. The artifact has an independent version,
 compatible investment-constitution versions, Decimal string fields, exact
-content snapshot, and content hash. Value-specific limits must not become
-universal domain constants.
+content snapshot, and content hash. It describes risk posture, normal sizing,
+concentration, turnover, cash preference, and Reviewer expectations; it does not
+pass or fail a mechanically valid trade.
 
 Policy selection is an explicit mapping keyed by exact managed `portfolio_id`
 and `manager_type`, with exact configured investment/risk versions and hashes.
@@ -80,8 +82,8 @@ hash-mismatched policy fails before manager invocation.
 
 ### Risk Evaluation Snapshot
 
-An immutable synchronized snapshot will provide deterministic sizing and
-concentration inputs:
+An immutable synchronized snapshot provides exact safety, review, and audit
+inputs:
 
 - exact portfolio state and portfolio identity;
 - attributable position valuations and total value;
@@ -95,28 +97,27 @@ concentration inputs:
 
 Initial means no positive-quantity position for the exact `SecurityIdentity`
 in this synchronized pre-trade snapshot. Add means a positive-quantity
-exact-identity position. A BUY target must be greater than current
-exact-identity weight. Boundaries are inclusive, and all applicable initial,
-evidence-band, total-target, and add-delta rules must pass.
+exact-identity position. These classifications and deltas are Reviewer/audit
+context; evidence profiles do not authorize portfolio weights.
 
-### Layered validation result
+### Safety and advisory results
 
-Every risk rule result will identify `SYSTEM_SAFETY` or `MANAGER_POLICY`, the
-stable rule ID and policy version, pass/fail, actual value, threshold, relevant
-input references, and explanation. The aggregate result records both policy
-artifacts and the risk-snapshot lineage.
+Hard `SYSTEM_SAFETY` results use stable rule IDs, version, pass/fail, actual
+value, threshold, input references, and explanation. Separate advisory
+manager-constitution assessments record alignment, deviations, and evidence
+concerns without participating in the executable safety aggregate.
 
-A failed manager-policy result retains the original recommendation and exact
-target weight, is journaled, creates no `ValidatedTrade`, and is
-non-executable. No automatic cap, resize, or manager retry is permitted.
+A failed System Safety result retains the original recommendation and exact
+target weight, is journaled, creates no `ValidatedTrade`, and is non-executable.
+An advisory finding never caps, resizes, or automatically rejects the target.
 
 ### Revision and execution checks
 
 Reconsideration uses a new decision cycle with an explicit immutable link to
 the earlier cycle. Immediately before execution, the system rebuilds current
-state and revalidates the approved target against the journaled Manager Risk
-Constitution and currently active System Safety Envelope. An execution attempt
-records its immutable execution-policy check whether it passes or fails.
+state and revalidates the approved target against the currently active System
+Safety Envelope. It verifies the journaled Manager Risk Constitution identity
+for lineage without treating guidance as an execution veto.
 
 Revision uses `revision_of_decision_cycle_id` and requires an existing,
 chronologically earlier, terminal non-executable predecessor for the same
@@ -650,8 +651,7 @@ It is responsible for:
 - dollar to quantity conversion
 - fractional-share rounding and precision checks
 - security eligibility checks
-- maximum-position checks
-- manager-specific initial/add/total target checks after ADR-008 is implemented
+- mathematical target-weight bounds and universal safety checks
 - required-field checks
 - duplicate or conflicting event checks
 - portfolio invariants
@@ -660,10 +660,9 @@ It is responsible for:
 
 The portfolio domain model describes the facts and lifecycle; it does not make subjective decisions.
 
-The current v0.1 validator implements mechanical feasibility and does not yet
-enforce manager-specific position-size or concentration limits. References to
-maximum-position enforcement in this contract describe the accepted ADR-008
-target, not current runtime capability.
+The current v0.1 validator implements mechanical feasibility. ADR-008 preserves
+that universal enforcement boundary: manager-specific sizing and concentration
+remain strategy intent and advisory review context.
 
 ## What Belongs in Deterministic Code
 

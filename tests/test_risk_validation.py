@@ -76,7 +76,13 @@ def _packet() -> ResearchPacket:
     )
 
 
-def _result(portfolio: Portfolio, *, action: str = "BUY", target_weight: Decimal | None = None) -> ValueManagerDecisionResult:
+def _result(
+    portfolio: Portfolio,
+    *,
+    action: str = "BUY",
+    target_weight: Decimal | None = None,
+    confidence_score: int = 72,
+) -> ValueManagerDecisionResult:
     evidence = _evidence()
     packet = _packet()
     batch = ResearchBatch(
@@ -101,7 +107,7 @@ def _result(portfolio: Portfolio, *, action: str = "BUY", target_weight: Decimal
         investment_thesis="Cash generation can compound over time." if action == "BUY" else None,
         valuation="The valuation is reasonable relative to cash generation.",
         risks=("Demand could weaken.",),
-        confidence_score=72,
+        confidence_score=confidence_score,
         evidence=(
             RecommendationEvidenceReference(
                 evidence_id=evidence.evidence_id,
@@ -306,6 +312,43 @@ def test_exact_cash_exhaustion_is_valid() -> None:
     assert result.target_purchase is not None
     assert result.target_purchase.cash_usage == Decimal("1000.00000000")
     assert result.target_purchase.remaining_cash == Decimal("0.00000000")
+
+
+def test_crm_like_twenty_five_percent_target_remains_mechanically_valid() -> None:
+    decision = _result(_portfolio(), target_weight=Decimal("0.25"))
+
+    result = DeterministicRiskValidator().validate(
+        decision,
+        validation_timestamp=VALIDATED_AT,
+        price_observation=_price_observation(),
+    )
+
+    assert result.passed
+    assert result.validated_trade is not None
+    assert result.decision_result.recommendation.target_weight == Decimal("0.25")
+    assert result.proposal is not None
+    assert result.proposal.target_weight == Decimal("0.25")
+
+
+def test_high_confidence_cannot_bypass_unavailable_cash_safety() -> None:
+    decision = _result(
+        _portfolio(
+            cash=Decimal("50"),
+            positions=(Position(_security(ticker="MSFT"), Decimal("1"), Decimal("950"), Decimal("950")),),
+        ),
+        target_weight=Decimal("0.25"),
+        confidence_score=100,
+    )
+
+    result = DeterministicRiskValidator().validate(
+        decision,
+        validation_timestamp=VALIDATED_AT,
+        price_observation=_price_observation(),
+    )
+
+    assert not result.passed
+    assert result.validated_trade is None
+    assert not _rule(result, "CASH_FEASIBILITY").passed
 
 
 def test_existing_position_at_target_does_not_create_a_zero_quantity_buy() -> None:

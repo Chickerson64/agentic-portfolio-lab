@@ -33,6 +33,7 @@ from .valuation import PortfolioValuation, PriceObservation
 _SEMANTIC_VERSION_PATTERN = re.compile(r"^[a-z][a-z0-9-]*-v[0-9]+\.[0-9]+\.[0-9]+$")
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _POLICY_SCHEMA_VERSION = "policy-domain.v1"
+_ADVISORY_POLICY_SCHEMA_VERSION = "policy-domain.v2"
 _CURRENT_POLICY_KIND = "CURRENT"
 _LEGACY_POLICY_KIND = "LEGACY_MECHANICAL"
 _VALUE_MANAGER_TYPE = "VALUE"
@@ -381,6 +382,44 @@ class SizingGuidance:
 
 
 @dataclass(frozen=True, slots=True)
+class ManagerRiskPersonality:
+    """Versioned advisory strategy posture; it never passes or fails a trade."""
+
+    summary: str
+    concentration_guidance: str
+    turnover_guidance: str
+    cash_guidance: str
+    deviation_expectations: tuple[str, ...] | list[str]
+    reviewer_focus: tuple[str, ...] | list[str]
+    advisory_only: bool = True
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "summary",
+            "concentration_guidance",
+            "turnover_guidance",
+            "cash_guidance",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _require_non_empty_text(getattr(self, field_name), field_name=field_name).strip(),
+            )
+        for field_name in ("deviation_expectations", "reviewer_focus"):
+            values = tuple(
+                _require_non_empty_text(item, field_name=f"{field_name} item").strip()
+                for item in _normalize_sequence(
+                    getattr(self, field_name),
+                    field_name=field_name,
+                    require_items=True,
+                )
+            )
+            object.__setattr__(self, field_name, values)
+        if self.advisory_only is not True:
+            raise ValueError("ManagerRiskPersonality must remain advisory_only")
+
+
+@dataclass(frozen=True, slots=True)
 class SizingLimits:
     maximum_total_single_name_target_weight: Decimal
     maximum_one_cycle_add_weight: Decimal
@@ -426,7 +465,7 @@ class EvidenceBandDefinition:
     band: EvidenceBand
     description: str
     reachable: bool
-    maximum_initial_target_weight: Decimal
+    maximum_initial_target_weight: Decimal | None
     required_endpoints: tuple[ProviderEndpoint, ...] | list[ProviderEndpoint]
     endpoint_requirements: tuple[EndpointCoverageRequirement, ...] | list[EndpointCoverageRequirement]
     required_metric_ids: tuple[str, ...] | list[str]
@@ -446,15 +485,16 @@ class EvidenceBandDefinition:
             raise TypeError("exact_security_identity_required must be a bool")
         if not isinstance(self.require_formula_id_match_metric_id, bool):
             raise TypeError("require_formula_id_match_metric_id must be a bool")
-        object.__setattr__(
-            self,
-            "maximum_initial_target_weight",
-            _require_fractional_weight(
-                self.maximum_initial_target_weight,
-                field_name="maximum_initial_target_weight",
-                allow_zero=False,
-            ),
-        )
+        if self.maximum_initial_target_weight is not None:
+            object.__setattr__(
+                self,
+                "maximum_initial_target_weight",
+                _require_fractional_weight(
+                    self.maximum_initial_target_weight,
+                    field_name="maximum_initial_target_weight",
+                    allow_zero=False,
+                ),
+            )
         endpoints = tuple(sorted(_normalize_sequence(self.required_endpoints, field_name="required_endpoints"), key=lambda item: item.value))
         if len(set(endpoints)) != len(endpoints):
             raise ValueError("required_endpoints must not contain duplicates")
@@ -572,7 +612,8 @@ class ManagerRiskConstitution:
     manager_type: str
     compatible_investment_constitutions: tuple[InvestmentConstitutionCompatibility, ...] | list[InvestmentConstitutionCompatibility]
     sizing_guidance: SizingGuidance
-    sizing_limits: SizingLimits
+    sizing_limits: SizingLimits | None
+    risk_personality: ManagerRiskPersonality | None
     evidence_bands: tuple[EvidenceBandDefinition, ...] | list[EvidenceBandDefinition]
     cash_deployment_policy: CashDeploymentPolicy
     balance_sheet_policy: BalanceSheetPolicy
@@ -607,8 +648,17 @@ class ManagerRiskConstitution:
         object.__setattr__(self, "compatible_investment_constitutions", compatible)
         if not isinstance(self.sizing_guidance, SizingGuidance):
             raise TypeError("sizing_guidance must be a SizingGuidance")
-        if not isinstance(self.sizing_limits, SizingLimits):
-            raise TypeError("sizing_limits must be a SizingLimits")
+        is_legacy_hard_policy = self.risk_constitution_version.value == "value-risk-v1.0.0"
+        if is_legacy_hard_policy:
+            if not isinstance(self.sizing_limits, SizingLimits):
+                raise TypeError("legacy value-risk-v1.0.0 sizing_limits must be a SizingLimits")
+            if self.risk_personality is not None:
+                raise ValueError("legacy value-risk-v1.0.0 must not be redefined with risk_personality")
+        else:
+            if self.sizing_limits is not None:
+                raise ValueError("advisory ManagerRiskConstitution versions must not define hard sizing_limits")
+            if not isinstance(self.risk_personality, ManagerRiskPersonality):
+                raise TypeError("advisory ManagerRiskConstitution versions require ManagerRiskPersonality")
         bands = tuple(
             sorted(
                 _normalize_sequence(self.evidence_bands, field_name="evidence_bands", require_items=True),
@@ -621,6 +671,11 @@ class ManagerRiskConstitution:
         if len(set(band_ids)) != len(bands):
             raise ValueError("evidence_bands must not contain duplicate bands")
         object.__setattr__(self, "evidence_bands", bands)
+        if is_legacy_hard_policy:
+            if any(item.maximum_initial_target_weight is None for item in bands):
+                raise ValueError("legacy value-risk-v1.0.0 evidence bands must retain their sizing ceilings")
+        elif any(item.maximum_initial_target_weight is not None for item in bands):
+            raise ValueError("advisory evidence bands must not authorize portfolio weights")
         for field_name, field_type in (
             ("cash_deployment_policy", CashDeploymentPolicy),
             ("balance_sheet_policy", BalanceSheetPolicy),
@@ -630,6 +685,18 @@ class ManagerRiskConstitution:
         ):
             if not isinstance(getattr(self, field_name), field_type):
                 raise TypeError(f"{field_name} must be a {field_type.__name__}")
+        if not is_legacy_hard_policy:
+            if self.cash_deployment_policy.minimum_cash_reserve is not None:
+                raise ValueError("advisory ManagerRiskConstitution must not define a hard minimum cash reserve")
+            if (
+                self.balance_sheet_policy.deterministic_leverage_threshold_enabled
+                or self.balance_sheet_policy.deterministic_current_ratio_threshold_enabled
+            ):
+                raise ValueError("advisory ManagerRiskConstitution must not enable deterministic balance-sheet thresholds")
+            if self.liquidity_policy.deterministic_threshold_enabled:
+                raise ValueError("advisory ManagerRiskConstitution must not enable a deterministic liquidity threshold")
+            if self.diversification_policy.universal_concentration_cap_below_full_weight is not None:
+                raise ValueError("advisory ManagerRiskConstitution must not define a hard concentration cap")
         object.__setattr__(self, "manager_type", manager_type)
         object.__setattr__(self, "loading_source", _require_non_empty_text(self.loading_source, field_name="loading_source").strip())
         computed_hash = stable_policy_hash(self.artifact_payload(for_hash=True))
@@ -653,7 +720,6 @@ class ManagerRiskConstitution:
                 for item in self.compatible_investment_constitutions
             ),
             "sizing_guidance": self.sizing_guidance,
-            "sizing_limits": self.sizing_limits,
             "evidence_bands": self.evidence_bands,
             "cash_deployment_policy": self.cash_deployment_policy,
             "balance_sheet_policy": self.balance_sheet_policy,
@@ -661,6 +727,10 @@ class ManagerRiskConstitution:
             "diversification_policy": self.diversification_policy,
             "missing_data_policy": self.missing_data_policy,
         }
+        if self.risk_constitution_version.value == "value-risk-v1.0.0":
+            payload["sizing_limits"] = self.sizing_limits
+        else:
+            payload["risk_personality"] = self.risk_personality
         if not for_hash:
             payload["loading_source"] = self.loading_source
             payload["content_hash"] = self.content_hash
@@ -840,7 +910,7 @@ class SystemSafetyEnvelope:
 class AssessedEvidenceBand:
     band: EvidenceBand
     reachable: bool
-    maximum_initial_target_weight: Decimal
+    maximum_initial_target_weight: Decimal | None
     eligible: bool
     disqualifications: tuple[str, ...] | list[str] = ()
 
@@ -851,15 +921,16 @@ class AssessedEvidenceBand:
             raise TypeError("reachable must be a bool")
         if not isinstance(self.eligible, bool):
             raise TypeError("eligible must be a bool")
-        object.__setattr__(
-            self,
-            "maximum_initial_target_weight",
-            _require_fractional_weight(
-                self.maximum_initial_target_weight,
-                field_name="maximum_initial_target_weight",
-                allow_zero=False,
-            ),
-        )
+        if self.maximum_initial_target_weight is not None:
+            object.__setattr__(
+                self,
+                "maximum_initial_target_weight",
+                _require_fractional_weight(
+                    self.maximum_initial_target_weight,
+                    field_name="maximum_initial_target_weight",
+                    allow_zero=False,
+                ),
+            )
         disqualifications = tuple(
             _require_non_empty_text(item, field_name="disqualifications item").strip()
             for item in _normalize_sequence(self.disqualifications, field_name="disqualifications")
@@ -1329,6 +1400,7 @@ class PolicyLoader:
 
     _SOURCE = "src/agentic_portfolio_lab/domain/policy.py"
     _VALUE_RISK_VERSION = RiskConstitutionVersion("value-risk-v1.0.0")
+    _VALUE_ADVISORY_RISK_VERSION = RiskConstitutionVersion("value-risk-v2.0.0")
     _SYSTEM_SAFETY_VERSION = SystemSafetyEnvelopeVersion("system-safety-v1.0.0")
 
     @classmethod
@@ -1364,6 +1436,7 @@ class PolicyLoader:
                 maximum_total_single_name_target_weight=Decimal("0.25"),
                 maximum_one_cycle_add_weight=Decimal("0.05"),
             ),
+            risk_personality=None,
             evidence_bands=(
                 EvidenceBandDefinition(
                     band=EvidenceBand.BASELINE_RESEARCH_V2,
@@ -1437,6 +1510,95 @@ class PolicyLoader:
                 explicit_missing_data_required=True,
                 interpret_missing_as_zero=False,
             ),
+            loading_source=cls._SOURCE,
+        )
+
+    @classmethod
+    def load_value_manager_risk_constitution_v2(
+        cls,
+        *,
+        compatible_investment_constitution: InvestmentConstitutionReference,
+    ) -> ManagerRiskConstitution:
+        """Load the advisory Value risk personality; no sizing ceiling is enforced."""
+        if compatible_investment_constitution.manager_type != _VALUE_MANAGER_TYPE:
+            raise ValueError("compatible investment constitution must belong to the VALUE manager")
+        approved_investment_constitution = InvestmentConstitutionReference.from_constitution(
+            ConstitutionLoader.load_value_manager_constitution_v2()
+        )
+        if compatible_investment_constitution != approved_investment_constitution:
+            raise ValueError("compatible investment constitution must match the single approved VALUE constitution artifact")
+        legacy_investment_constitution = InvestmentConstitutionReference.from_constitution(
+            ConstitutionLoader.load_value_manager_constitution()
+        )
+        legacy = cls.load_value_manager_risk_constitution_v1(
+            compatible_investment_constitution=legacy_investment_constitution
+        )
+        evidence_profiles = tuple(
+            EvidenceBandDefinition(
+                band=definition.band,
+                description=(
+                    "Current Research v2 baseline coverage; this describes evidence maturity and does not authorize a weight."
+                    if definition.band is EvidenceBand.BASELINE_RESEARCH_V2
+                    else "Reserved richer-evidence profile; undefined and unreachable until a later research contract."
+                ),
+                reachable=definition.reachable,
+                maximum_initial_target_weight=None,
+                required_endpoints=definition.required_endpoints,
+                endpoint_requirements=definition.endpoint_requirements,
+                required_metric_ids=definition.required_metric_ids,
+                allowed_reuse_statuses=definition.allowed_reuse_statuses,
+                exact_security_identity_required=definition.exact_security_identity_required,
+                required_metric_reliability=definition.required_metric_reliability,
+                required_metric_freshness=definition.required_metric_freshness,
+                require_formula_id_match_metric_id=definition.require_formula_id_match_metric_id,
+            )
+            for definition in legacy.evidence_bands
+        )
+        return ManagerRiskConstitution(
+            schema_version=_ADVISORY_POLICY_SCHEMA_VERSION,
+            risk_constitution_version=cls._VALUE_ADVISORY_RISK_VERSION,
+            manager_type=_VALUE_MANAGER_TYPE,
+            compatible_investment_constitutions=(
+                InvestmentConstitutionCompatibility(
+                    constitution_version=ConstitutionVersion(approved_investment_constitution.constitution_version),
+                    content_hash=approved_investment_constitution.content_hash,
+                ),
+            ),
+            sizing_guidance=SizingGuidance(
+                typical_starter_weight_min=Decimal("0.05"),
+                typical_starter_weight_max=Decimal("0.10"),
+                minimum_cash_reserve=None,
+                confidence_has_sizing_authority=False,
+            ),
+            sizing_limits=None,
+            risk_personality=ManagerRiskPersonality(
+                summary=(
+                    "Moderately risk-averse Value strategy that normally prefers measured entries but may concentrate "
+                    "when valuation, quality, and durability evidence is unusually compelling."
+                ),
+                concentration_guidance=(
+                    "Five to ten percent is normal starter guidance, not a limit; larger targets require proportionately stronger reasoning."
+                ),
+                turnover_guidance=(
+                    "Prefer thesis-driven changes over unnecessary turnover, while allowing deliberate concentration or rotation."
+                ),
+                cash_guidance="No minimum cash reserve; holding cash is a strategy choice when opportunities are unattractive.",
+                deviation_expectations=(
+                    "Explain why an unusually concentrated target is consistent with the Value thesis.",
+                    "Address evidence gaps, balance-sheet risk, durability, and valuation before making an exceptional allocation.",
+                ),
+                reviewer_focus=(
+                    "Challenge whether concentration is supported by normalized and durable economics.",
+                    "Challenge leverage, liquidity, missing-data, provenance, and misleading cross-company comparisons.",
+                ),
+                advisory_only=True,
+            ),
+            evidence_bands=evidence_profiles,
+            cash_deployment_policy=legacy.cash_deployment_policy,
+            balance_sheet_policy=legacy.balance_sheet_policy,
+            liquidity_policy=legacy.liquidity_policy,
+            diversification_policy=legacy.diversification_policy,
+            missing_data_policy=legacy.missing_data_policy,
             loading_source=cls._SOURCE,
         )
 

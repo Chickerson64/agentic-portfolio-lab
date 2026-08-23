@@ -706,11 +706,12 @@ The example shows the expected pattern:
 - negative evidence is retained
 - no investment decision is embedded in the packet
 
-## Risk-policy evidence coverage (accepted, not yet implemented)
+## Manager-risk evidence coverage
 
-ADR-008 introduces typed evidence coverage for deterministic manager-policy
-sizing. This is a coverage assessment, not an investment-quality score and not
-a new responsibility of the Research Packet.
+ADR-008 introduces typed evidence coverage for manager reasoning, Reviewer
+assessment, human review, and audit. This is a coverage/maturity assessment,
+not an investment-quality score, sizing authorization, or new responsibility of
+the Research Packet.
 
 `BASELINE_RESEARCH_V2` is the only currently defined and reachable band. It
 requires exact `SecurityIdentity` agreement among candidate, packet, and every
@@ -742,10 +743,9 @@ durability is established, or the evidence economically supports a BUY.
 Missing facts and derived `MissingData` are preserved and never inferred or
 interpreted as zero.
 
-An enhanced evidence band is reserved by the Value Manager Risk Constitution,
-but its evidence topics and acquisition path are deliberately deferred. Until
-a later contract defines and implements them, no Research Packet can qualify
-for enhanced sizing.
+An enhanced evidence profile is reserved by the Value Manager Risk
+Constitution, but its evidence topics and acquisition path are deliberately
+deferred. It carries no portfolio-weight ceiling or sizing authority.
 
 ## Remaining Open Questions
 

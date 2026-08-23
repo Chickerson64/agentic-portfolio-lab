@@ -185,24 +185,35 @@ class ValueManagerConstitution:
 
 
 class ConstitutionLoader:
-    """Loads the single approved Value constitution from this repository."""
+    """Load exact versioned Value constitutions from this repository."""
 
     _VERSION = ConstitutionVersion("value-v1.0.0")
     _SOURCE = "docs/value-manager-constitution.md"
+    _ADVISORY_RISK_VERSION = ConstitutionVersion("value-v2.0.0")
+    _ADVISORY_RISK_SOURCE = "docs/value-manager-constitution-v2.md"
 
     @classmethod
-    def load_value_manager_constitution(cls) -> ValueManagerConstitution:
-        """Return the approved repository artifact without parsing its methodology."""
-        source_path = Path(__file__).resolve().parents[3] / cls._SOURCE
+    def _load(cls, *, version: ConstitutionVersion, source: str) -> ValueManagerConstitution:
+        source_path = Path(__file__).resolve().parents[3] / source
         try:
             content = source_path.read_text(encoding="utf-8")
         except OSError as error:
-            raise ValueError(f"unable to load Value Manager constitution from {cls._SOURCE}") from error
+            raise ValueError(f"unable to load Value Manager constitution from {source}") from error
         return ValueManagerConstitution(
-            version=cls._VERSION,
+            version=version,
             manager_type=_VALUE_MANAGER_TYPE,
             name="Value Manager Constitution",
             description="Approved methodology for the first Value Manager.",
-            loading_source=cls._SOURCE,
+            loading_source=source,
             content=content,
         )
+
+    @classmethod
+    def load_value_manager_constitution(cls) -> ValueManagerConstitution:
+        """Return the production v1 artifact unchanged."""
+        return cls._load(version=cls._VERSION, source=cls._SOURCE)
+
+    @classmethod
+    def load_value_manager_constitution_v2(cls) -> ValueManagerConstitution:
+        """Return the amended methodology compatible with advisory risk v2."""
+        return cls._load(version=cls._ADVISORY_RISK_VERSION, source=cls._ADVISORY_RISK_SOURCE)

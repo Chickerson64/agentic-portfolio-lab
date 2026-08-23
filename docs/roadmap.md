@@ -22,11 +22,11 @@ Still later-phase work, not claimed as v0.1:
 - additional managers, SELL, and rebalance
 - brokerage, authentication, scheduling, and cloud persistence
 
-ADR-008 now locks a two-layer risk architecture: a minimal universal System
-Safety Envelope plus versioned Manager Risk Constitutions. Lane 0 aligns the
-contracts only. The current runtime still performs legacy mechanical
-validation; policy artifacts, Value-specific sizing, linked revision cycles,
-and execution-time policy revalidation are not yet implemented.
+Amended ADR-008 locks hard universal System Safety plus versioned advisory
+Manager Risk Constitutions, with optional explicit hard mandates deferred. The
+current runtime still performs legacy mechanical validation; advisory policy
+selection, linked revision cycles, and execution-time safety revalidation are
+not yet implemented.
 
 The phase list below remains the historical plan.
 
@@ -157,18 +157,18 @@ approval and must not be inferred to be current capability:
 1. **Lane 1 — typed policy domain:** risk versions, typed artifacts, Decimal
    string parsing, canonical SHA-256 hashing, compatibility, evidence coverage,
    synchronized risk snapshots, and invariants.
-2. **Lane 2 — two-layer validation:** immutable in-memory system/manager rule
-   artifacts (including failure results), Value v1 enforcement, unchanged
-   target weights, and the CRM 25% regression. Durable policy persistence is
-   not part of Lane 2.
+2. **Lane 2 — safety plus advisory assessment:** immutable in-memory System
+   Safety results and separate non-gating manager-constitution observations,
+   unchanged target weights, and a CRM 25% mechanical-validity regression.
+   Durable policy persistence is not part of Lane 2.
 3. **Lane 3 — durable compatibility:** persist validation plus exact policy
    artifacts, implement discriminated legacy decoding/re-encoding, indexes,
    immutability, and restart coverage.
 4. **Lane 4 — application and API:** exact policy selection, operator
    visibility, explicit linked revisions, and portfolio/manager research
    lineage.
-5. **Lane 5 — execution revalidation:** current-state snapshots and immutable
-   execution-policy checks.
+5. **Lane 5 — execution revalidation:** current-state System Safety snapshots,
+   advisory-policy lineage verification, and immutable execution-policy checks.
 6. **Lane 6 — AI Reviewer integration:** generalized manager/reviewer types and
    durable paper-only REQUEST_CHANGES-with-CRITICAL override flag/rationale.
    Risk policy may activate without this optional adapter; until Lane 6 lands,

@@ -1,169 +1,175 @@
-# ADR-008: Two-Layer Manager Risk Constitutions
+# ADR-008: System Safety and Advisory Manager Risk Constitutions
 
 **Date:** 2026-08-22
+**Amended:** 2026-08-23
 **Status:** Accepted
 
 ## Motivation
 
 The first live Research v2 recommendation proposed BUY CRM at a 25% target
-weight. Existing deterministic validation correctly preserved identity,
-chronology, cash feasibility, and weight-to-quantity arithmetic, but it had no
-manager-specific initial-position or concentration policy. The validation pass
-therefore established mechanical feasibility, not that 25% was justified by
-the Value strategy or its evidence.
+weight. Deterministic validation established that the proposal was mechanically
+feasible, while human and adversarial review found that its concentration was
+not well supported by the available evidence. The initial version of this ADR
+responded by making Value-specific sizing preferences deterministic rejection
+rules.
 
-One universal concentration policy would incorrectly force Value, Growth /
-Tech, and Conservative managers to share an investment philosophy. Letting an
-LLM confidence score or an automatic cap choose the executable weight would
-blur the boundary between manager intent and deterministic policy.
+That would distort the intended manager competition. Value, Growth, and
+Conservative managers must be able to exhibit materially different
+concentration, turnover, and cash behavior. Deterministic platform safety must
+not become the investment committee.
 
 ## Decision
 
-Adopt two deterministic policy layers:
+Adopt three conceptually distinct layers:
 
-1. a minimal universal **System Safety Envelope** for supported mechanics,
-   state integrity, provenance, chronology, cash feasibility, immutable
-   lineage, approval, and execution safety; and
-2. a versioned **Manager Risk Constitution** for strategy-specific sizing,
-   concentration, evidence, cash-deployment, and diversification policy.
+1. the universal **System Safety Envelope**, which is hard deterministic
+   enforcement;
+2. a versioned **Manager Risk Constitution**, which is advisory strategy and
+   risk personality; and
+3. an optional explicit **Manager or Portfolio Mandate**, which may contain
+   hard constraints for a future deliberately constrained portfolio but is not
+   active in the current experiment.
 
-The manager proposes an immutable target weight. Deterministic validation
-evaluates that weight unchanged and then converts it to notional and quantity;
-it never normalizes, caps, or silently resizes it. A policy failure is journaled
-with the original recommendation, creates no validated trade, and is
-non-executable. Reconsideration requires a new explicitly linked decision
-cycle, never an automatic retry.
+The manager proposes one immutable target weight. No downstream component
+normalizes, caps, or silently resizes it. Deterministic code validates universal
+mechanical safety and converts a passing target to notional and quantity.
+Manager-constitution observations inform the manager, AI Reviewer, human
+operator, and durable audit history, but they do not make a mechanically valid
+trade non-executable.
 
-Both layers are repository-owned typed artifacts with independent semantic
-version namespaces, canonical typed serialization, exact immutable snapshots,
-repository loading sources, and SHA-256 content hashes. Manager Risk
-Constitutions also declare compatible investment-constitution version/hash
-pairs. Historical decisions retain the exact safety and manager-policy
-artifacts under which they were evaluated. Reusing a version for changed
-content is invalid.
+Both active artifacts are repository-owned, typed, independently versioned,
+canonically serialized, and content-hashed. A Manager Risk Constitution declares
+compatible investment-constitution version/hash pairs. Historical decisions
+retain the exact artifacts used. Reusing a version for changed content is
+invalid.
 
-For the current paper experiment, the System Safety Envelope has no universal
-concentration ceiling below 100%. A real-money catastrophic ceiling is
-deferred. Confidence is descriptive only and has no deterministic sizing
-authority.
+## Universal hard enforcement
 
-The first Value-specific policy is:
+The System Safety Envelope owns supported actions and instruments, long-only
+funded mechanics, exact `SecurityIdentity` and currency, attributable price and
+research provenance, chronology, cash feasibility, non-negative Decimal-safe
+state, positive executable quantity, immutable lineage, human approval, HOLD
+and failed/rejected/expired non-execution, and managed/benchmark separation.
 
-- typical starter guidance: 5–10%;
-- baseline Research v2 maximum initial position: 10%;
-- enhanced-evidence maximum initial position: 15%;
-- maximum total single-name target: 25%;
-- maximum one-cycle add: 5 percentage points;
-- no minimum cash reserve; and
-- no deterministic leverage or current-ratio thresholds yet.
+For the current paper experiment, it has no concentration ceiling below 100%.
+A mechanically valid long-only target up to 100% may pass. Real-money
+catastrophic concentration policy remains deferred.
 
-These ceilings are inclusive. Initial means no positive-quantity position for
-the exact `SecurityIdentity`; add means a positive-quantity exact-identity
-position. A BUY must increase exposure. Baseline and enhanced initial targets
-must be at most 10% and 15%, every target at most 25%, and each add delta
-(`proposed target - synchronized current exact-identity weight`) at most five
-percentage points. Exactly-equal boundaries pass. The 5–10% starter range is
-non-enforceable guidance and creates no minimum.
+## Advisory manager risk personality
 
-`BASELINE_RESEARCH_V2` is the only currently reachable evidence band. It
-requires exact identity, current/reused-current coverage for OVERVIEW and all
-four statements, and evaluation of the locked 16 derived metrics. Each metric
-retains either its typed value or explicit `MissingData`; missing values are
-never required to become numeric and are never interpreted as zero. Richer
-enhanced/durability evidence is deferred and unreachable.
+The Manager Risk Constitution describes:
 
-During paper trading only, a human may override a `ReviewerResult` disposition
-of `REQUEST_CHANGES` containing at least one `CRITICAL`-severity finding. The
-human outcome stores an explicit override flag and dedicated non-empty durable
-rationale linked to that immutable result. Human review cannot override a
-failed deterministic safety or manager-policy rule, and Reviewer invocation
-occurs only after deterministic validation passes.
+- risk posture and normal sizing guidance;
+- concentration, turnover, rotation, and cash preferences;
+- evidence expected for unusual allocations;
+- deviations that require explicit explanation;
+- balance-sheet, liquidity, durability, and missing-data concerns; and
+- the rubric the AI Reviewer should apply to that manager.
 
-Before execution, the system rebuilds current portfolio/valuation inputs and
-revalidates the exact target against the journaled Manager Risk Constitution
-artifact/hash and the currently active exact System Safety Envelope
-artifact/hash. The execution check persists both identities. It does not
-change the approved target.
+For Value v2, 5–10% is normal starter-position guidance only. It creates no
+minimum or maximum and carries no execution authority. The former 10% baseline
+initial, 15% enhanced initial, 25% total single-name, and five-percentage-point
+add ceilings are not active deterministic rules. Confidence remains descriptive
+and cannot authorize or bypass System Safety.
 
-Existing v0.1 artifacts remain immutable legacy mechanical validations and
-reopen through a discriminated presentation-only legacy reference without a
-fabricated artifact, version, or hash. Re-encoding omits new policy fields and
-preserves historical payload structure. Policy activation requires Lanes 1–5
-plus migration/restart tests; new cycles may not use the legacy reference after
-activation.
+Evidence bands describe attributable evidence coverage and maturity. They do
+not authorize portfolio weights. `BASELINE_RESEARCH_V2` remains the currently
+reachable coverage profile, and richer durability evidence remains undefined
+and unreachable. Missing values remain explicit `MissingData`, never zero.
+
+The AI Reviewer critiques consistency with the selected manager personality,
+the sufficiency of evidence for the proposed allocation, contradictions, and
+unjustified deviations. It never resizes the recommendation. An adverse
+Reviewer result is advisory for the current paper experiment: the human may
+reject, request a new explicitly linked decision cycle, or approve with the
+durable rationale required by the human-outcome contract. No Reviewer or human
+may bypass System Safety.
+
+## Optional future mandates
+
+Some future portfolios may have explicit hard mandates, such as prohibited
+asset classes, contractual cash reserves, or concentration restrictions. Such
+constraints must be deliberately selected, typed, versioned, content-hashed,
+and visibly distinct from manager personality. This ADR does not introduce a
+mandate runtime or make any mandate active for Value, Growth, or Conservative.
+
+## Execution and revision lineage
+
+Reconsideration never overwrites a recommendation. It requires a new decision
+cycle linked through `revision_of_decision_cycle_id` to an earlier terminal
+cycle for the same manager and managed portfolio.
+
+Immediately before execution, deterministic code rebuilds current portfolio and
+price state and revalidates the unchanged approved target against the currently
+active System Safety Envelope. It also verifies the journaled investment and
+Manager Risk Constitution identities for immutable lineage. Advisory guidance
+is not reinterpreted as an execution veto. A future explicit hard mandate would
+require its own approved execution-time contract.
+
+## Versioning and legacy artifacts
+
+`value-risk-v1.0.0` retains its original hard-sizing content and hash. It was
+never activated in production and must not be silently redefined. Because the
+loaded Value methodology text also changed, `value-v1.0.0` remains frozen at
+`docs/value-manager-constitution.md`; the amended methodology is
+`value-v2.0.0` at `docs/value-manager-constitution-v2.md`. The new advisory
+`value-risk-v2.0.0` declares compatibility only with that exact v2 investment
+artifact and has a new schema identity and content hash.
+
+Existing v0.1 journals remain immutable legacy mechanical validations exposed
+through the presentation-only `LegacyPolicyReference`; no artifact, version, or
+hash is fabricated. The new advisory architecture is not active in production
+until its later persistence/application lanes are explicitly approved.
+
+## Multi-manager experimental fairness
+
+Value, Growth, and Conservative use separate managed portfolios and histories.
+Starting capital, Cash Events, evidence cutoff, opportunity universe, provider
+inputs, cadence, System Safety, execution arithmetic, approval procedure, and
+benchmark methodology are held equal. Concentration, turnover, cash preference,
+and investment reasoning are deliberate experimental variables.
+
+The Reviewer applies the same procedure but evaluates each manager against its
+own constitution. It must not impose one generic diversification philosophy on
+all managers.
 
 ## Consequences
 
-- Mechanical validity is explicitly distinct from manager-policy validity.
-- Future managers can adopt materially different strategy limits while sharing
-  the same platform safety rules and arithmetic.
-- Invalid sizing cannot be made executable by silent resizing, confidence, AI
-  Reviewer output, or human override.
-- Decisions persist exact policy identity and reproducible rule inputs.
-- Execution can stop safely when portfolio state, prices, or active system
-  safety change after approval.
-- Additional typed artifacts, snapshots, persistence fields, API fields, and
-  backward-compatible decoding are required in later implementation lanes.
-- Multi-manager comparisons require separate managed portfolios and histories
-  under equal funding, data, timing, execution, approval, and performance
-  conditions. SPY remains a separate deterministic benchmark.
-- Policy selection is keyed by exact managed portfolio identity and manager
-  type with configured investment/risk versions and hashes. Missing,
-  ambiguous, incompatible, or implicit-latest selection fails before manager
-  invocation.
+- System Safety remains deterministic and non-bypassable.
+- Manager personalities remain observable rather than normalized away.
+- Extreme concentration can be proposed and, if mechanically safe and human
+  approved, executed unchanged.
+- Strategy deviations are durable and reviewable without becoming hidden hard
+  limits.
+- Typed artifacts, hashes, compatibility references, evidence assessments,
+  synchronized snapshots, and audit lineage remain useful.
+- Optional hard mandates require a later explicit architecture decision.
 
 ## Clarifications to earlier decisions
 
-- ADR-002's portfolio constitution remains the investment-methodology and
-  deployment-philosophy contract. This ADR separates machine-enforced manager
-  risk policy from that prose artifact.
-- ADR-003's “same deterministic result” applies only when recommendation,
-  portfolio and valuation snapshot, price observations, evidence assessment,
-  exact System Safety Envelope artifact/hash, and exact Manager Risk
-  Constitution artifact/hash are identical.
-- ADR-003's manager-intent boundary includes the proposed target weight.
-  Deterministic systems validate and convert it; they do not choose a
-  replacement weight.
-
-## Revision lineage
-
-An invalid recommendation may be reconsidered only through a new cycle whose
-`revision_of_decision_cycle_id` points to an existing, earlier, terminal,
-non-executable cycle for the same manager and managed portfolio. Revision
-lineage is linear: no self-reference, cycles, or more than one direct child.
-The complete decision reruns, so action and ticker may differ from the
-predecessor.
-
-## Canonical identity
-
-Lane 1 must normatively implement canonical UTF-8 JSON before publishing an
-artifact: lexicographically sorted object keys, no insignificant whitespace,
-stable enum strings, defaults materialized, optional fields explicit as
-`null`, ordered arrays preserved, and loading source/hash excluded from the
-hashed payload. Finite Decimals use one normalized non-exponent fixed-point
-string (no redundant zeros, `"0"` for either signed zero), so numerically
-equivalent Decimals hash identically. All strings are normalized to Unicode
-NFC and lone surrogates/non-scalar input are rejected. Object keys sort by the
-NFC Unicode scalar-value sequence. JSON escapes `"` as `\"` and `\` as `\\`;
-U+0008/U+0009/U+000A/U+000C/U+000D use `\b`/`\t`/`\n`/`\f`/`\r`, and other
-U+0000–U+001F controls use lowercase `\u00xx`. Every other scalar is emitted
-literally as UTF-8. SHA-256 is lowercase hexadecimal. This same canonical
-contract applies to persisted investment-constitution artifact hashes.
+- ADR-002 continues to own investment methodology. Manager Risk Constitutions
+  add versioned advisory risk personality rather than deterministic sizing law.
+- ADR-003's deterministic reproducibility applies to System Safety evaluation
+  for the same recommendation and authoritative inputs.
+- The manager-intent boundary includes the proposed target weight; deterministic
+  systems validate and convert it but never choose a replacement weight.
 
 ## Alternatives considered
 
-- **One universal sub-100% concentration ceiling:** rejected for the current
-  paper experiment because it would encode a strategy preference as platform
-  safety.
+- **Universal sub-100% concentration ceiling:** rejected for the current paper
+  experiment because it encodes one investment philosophy as platform safety.
+- **Manager-specific hard sizing cage:** rejected because it suppresses the
+  strategy differences the experiment is intended to observe.
 - **Automatic deterministic capping:** rejected because it changes manager
-  intent and makes the thesis, confidence, and executable trade inconsistent.
-- **Confidence-based sizing:** rejected for v1 because model confidence is
-  uncalibrated and descriptive.
-- **Policy only in prose or prompts:** rejected because hard limits must be
-  typed, versioned, deterministic, and reproducible.
-- **Retroactively apply policy to v0.1 journals:** rejected because historical
-  artifacts are immutable and did not contain these inputs.
+  intent and breaks recommendation/execution consistency.
+- **Confidence-based authority:** rejected because confidence is uncalibrated
+  and cannot cure evidence or safety defects.
+- **Untyped prompt-only personality:** rejected because strategy identity and
+  reviewer expectations must remain versioned, reproducible, and auditable.
 
 ## Follow-up
 
-Implement the sequenced lanes in [Manager Risk Constitution Contract](../manager-risk-constitution.md), beginning with typed domain artifacts only after explicit approval for Lane 1.
+Revise the Lane 1 typed artifact to publish `value-risk-v2.0.0`, then salvage
+only the System Safety and audit portions of the frozen Lane 2 diff. Do not
+activate persistence, application selection, Reviewer calls, or execution-time
+policy behavior without separate approval.
