@@ -40,7 +40,7 @@ CANDIDATE_UNIVERSE: tuple[SecurityIdentity, ...] = (
     _equity("XOM", "NYSE"),
     _equity("CVX", "NYSE"),
     _equity("NEE", "NYSE"),
-    _equity("LIN", "NYSE"),
+    _equity("LIN", "NASDAQ"),
 )
 # Operator-approved managed-research universe for Research v2.
 VALUE_US_EQUITIES_V1 = CandidateUniverse(

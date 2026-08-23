@@ -48,7 +48,7 @@ APPROVED_VALUE_US_EQUITIES_V1: tuple[tuple[str, str], ...] = (
     ("XOM", "NYSE"),
     ("CVX", "NYSE"),
     ("NEE", "NYSE"),
-    ("LIN", "NYSE"),
+    ("LIN", "NASDAQ"),
 )
 
 
