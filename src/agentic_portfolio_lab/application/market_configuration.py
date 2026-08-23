@@ -55,10 +55,12 @@ RESEARCH_CANDIDATE_UNIVERSE: tuple[SecurityIdentity, ...] = tuple(
     for security in CANDIDATE_UNIVERSE
     if security.ticker in {"MSFT", "AAPL", "GOOGL", "JPM", "COST"}
 )
-# Live price refresh covers the full managed universe plus SPY. Full-universe
-# refresh may exceed the Twelve Data free-tier per-minute cap; the constant
-# documents provider limits but does not block the approved design.
+# Live price refresh is the full managed universe plus SPY. The Twelve Data
+# adapter paces consecutive /quote calls at TWELVE_DATA_REQUEST_PACE_SECONDS so
+# 31 requests stay under the free-tier per-minute cap. TWELVE_DATA_FREE_TIER_
+# REQUEST_LIMIT documents the provider limit; the universe size is not reduced.
 LIVE_PRICE_CANDIDATE_UNIVERSE: tuple[SecurityIdentity, ...] = CANDIDATE_UNIVERSE
 TWELVE_DATA_FREE_TIER_REQUEST_LIMIT = 8
+TWELVE_DATA_REQUEST_PACE_SECONDS = 8
 ALPHA_VANTAGE_DAILY_REQUEST_LIMIT = 25
 SPY_BENCHMARK = SecurityIdentity(ticker="SPY", security_type="ETF", exchange="NYSE ARCA", currency="USD")

@@ -18,6 +18,7 @@ from agentic_portfolio_lab.application.market_configuration import (
     RESEARCH_CANDIDATE_UNIVERSE,
     SPY_BENCHMARK,
     TWELVE_DATA_FREE_TIER_REQUEST_LIMIT,
+    TWELVE_DATA_REQUEST_PACE_SECONDS,
 )
 from agentic_portfolio_lab.application.refresh_prices import InMemoryPriceRefreshState, RefreshPricesService
 from agentic_portfolio_lab.domain.market_prices import MarketPriceConfigurationError, MarketPriceError
@@ -40,6 +41,17 @@ def _quote(**overrides: object) -> dict[str, object]:
         "close": "523.123456789",
         **overrides,
     }
+
+
+def _quote_for_url(url: str) -> dict[str, object]:
+    query = parse_qs(urlparse(url).query)
+    overrides: dict[str, object] = {
+        "symbol": query["symbol"][0],
+        "exchange": query["exchange"][0],
+    }
+    if "mic_code" in query:
+        overrides["mic_code"] = query["mic_code"][0]
+    return _quote(**overrides)
 
 
 def test_twelve_data_quote_maps_direct_decimal_and_provider_truthful_metadata() -> None:
@@ -231,6 +243,8 @@ def test_configured_live_refresh_uses_managed_universe_plus_spy() -> None:
 
     assert LIVE_PRICE_CANDIDATE_UNIVERSE == CANDIDATE_UNIVERSE
     assert len(RESEARCH_CANDIDATE_UNIVERSE) == 5
+    assert len(CANDIDATE_UNIVERSE) == 30
+    assert len(required) == 31
     assert len(required) == len(CANDIDATE_UNIVERSE) + 1
     assert len(required) > TWELVE_DATA_FREE_TIER_REQUEST_LIMIT
     assert len(set(required)) == len(required)
@@ -247,3 +261,88 @@ def test_refresh_provider_failure_does_not_partially_apply_state() -> None:
     with pytest.raises(MarketPriceError, match="AAPL"):
         service.refresh(())
     assert state.latest_observations == (existing,)
+
+
+def test_twelve_data_default_pace_matches_application_constant() -> None:
+    sleeps: list[float] = []
+    provider = TwelveDataMarketPriceProvider(
+        api_key="test-key",
+        transport=lambda url: _quote_for_url(url),
+        sleep=sleeps.append,
+    )
+
+    provider.get_observation(MSFT)
+    provider.get_observation(CANDIDATE_UNIVERSE[1])
+
+    assert sleeps == [TWELVE_DATA_REQUEST_PACE_SECONDS]
+
+
+def test_twelve_data_paces_full_live_refresh_under_free_tier_cap() -> None:
+    transports: list[str] = []
+    sleeps: list[float] = []
+
+    def transport(url: str) -> dict[str, object]:
+        transports.append(url)
+        return _quote_for_url(url)
+
+    provider = TwelveDataMarketPriceProvider(api_key="test-key", transport=transport, sleep=sleeps.append)
+    state = InMemoryPriceRefreshState()
+    service = RefreshPricesService(
+        provider=provider,
+        state=state,
+        candidate_universe=LIVE_PRICE_CANDIDATE_UNIVERSE,
+        spy_benchmark=SPY_BENCHMARK,
+    )
+    required = service.required_securities(())
+
+    result = service.refresh(())
+
+    assert len(required) == 31
+    assert len(transports) == 31
+    assert len(sleeps) == 30
+    assert sleeps == [TWELVE_DATA_REQUEST_PACE_SECONDS] * 30
+    assert [parse_qs(urlparse(url).query)["symbol"][0] for url in transports] == [security.ticker for security in required]
+    assert required == (*CANDIDATE_UNIVERSE, SPY_BENCHMARK)
+    spy_query = parse_qs(urlparse(transports[-1]).query)
+    assert spy_query == {
+        "symbol": ["SPY"],
+        "exchange": ["NYSE"],
+        "mic_code": ["ARCX"],
+        "type": ["ETF"],
+        "apikey": ["test-key"],
+    }
+    assert len(result.observations) == 31
+    assert all(observation.source_provider_identity == "twelve-data" for observation in result.observations)
+    assert all(observation.observed_price == Decimal("523.123456789") for observation in result.observations)
+    assert state.latest_observations == result.observations
+
+
+def test_twelve_data_paced_refresh_failure_does_not_partially_apply_state() -> None:
+    existing = FakeProvider().get_observation(MSFT)
+    state = InMemoryPriceRefreshState()
+    state.apply_price_refresh((existing,))
+    transports: list[str] = []
+    sleeps: list[float] = []
+
+    def transport(url: str) -> dict[str, object]:
+        transports.append(url)
+        if parse_qs(urlparse(url).query)["symbol"][0] == "AAPL":
+            raise MarketPriceError("no price for AAPL")
+        return _quote_for_url(url)
+
+    service = RefreshPricesService(
+        provider=TwelveDataMarketPriceProvider(api_key="test-key", transport=transport, sleep=sleeps.append),
+        state=state,
+        candidate_universe=CANDIDATE_UNIVERSE,
+        spy_benchmark=SPY_BENCHMARK,
+    )
+    required = service.required_securities(())
+    fail_index = next(index for index, security in enumerate(required) if security.ticker == "AAPL")
+
+    with pytest.raises(MarketPriceError, match="AAPL"):
+        service.refresh(())
+
+    assert state.latest_observations == (existing,)
+    assert len(transports) == fail_index + 1
+    assert sleeps == [TWELVE_DATA_REQUEST_PACE_SECONDS] * fail_index
+    assert len({parse_qs(urlparse(url).query)["symbol"][0] for url in transports}) == len(transports)

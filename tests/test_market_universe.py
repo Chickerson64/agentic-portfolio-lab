@@ -89,6 +89,7 @@ def test_live_price_refresh_required_list_is_managed_universe_plus_spy() -> None
     required = service.required_securities(())
 
     assert LIVE_PRICE_CANDIDATE_UNIVERSE is CANDIDATE_UNIVERSE
+    assert len(required) == 31
     assert tuple(required[:-1]) == CANDIDATE_UNIVERSE
     assert required[-1] is SPY_BENCHMARK
     assert SPY_BENCHMARK not in CANDIDATE_UNIVERSE

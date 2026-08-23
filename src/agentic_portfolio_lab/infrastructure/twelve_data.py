@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
@@ -20,6 +21,7 @@ _QUOTE_URL = "https://api.twelvedata.com/quote"
 _QUOTE_CLOSE_FIELD_CONVENTION = "twelve-data-quote-close-field"
 
 JsonTransport = Callable[[str], Mapping[str, object]]
+Sleep = Callable[[float], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,9 +76,19 @@ class TwelveDataMarketPriceProvider:
     documented request ``type`` filter and never infers it from a response.
     """
 
-    def __init__(self, *, api_key: str | None = None, transport: JsonTransport = _live_transport) -> None:
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        transport: JsonTransport = _live_transport,
+        sleep: Sleep = time.sleep,
+        pace_seconds: float = 8,
+    ) -> None:
         self._api_key = api_key
         self._transport = transport
+        self._sleep = sleep
+        self._pace = pace_seconds
+        self._has_requested = False
 
     def get_observation(self, security: SecurityIdentity) -> PriceObservation:
         api_key = self._api_key or os.environ.get("TWELVE_DATA_API_KEY")
@@ -92,11 +104,7 @@ class TwelveDataMarketPriceProvider:
         }
         if provider_identity.mic_code is not None:
             parameters["mic_code"] = provider_identity.mic_code
-        query = urlencode(
-            parameters
-        )
-        payload = self._transport(f"{_QUOTE_URL}?{query}")
-        self._raise_if_provider_error(payload)
+        payload = self._query(parameters)
         self._require_matching_identity(payload, security, provider_identity)
         price = self._decimal(payload, "close")
         currency = self._text(payload, "currency").upper()
@@ -115,6 +123,14 @@ class TwelveDataMarketPriceProvider:
             source_provider_identity="twelve-data",
             price_convention=_QUOTE_CLOSE_FIELD_CONVENTION,
         )
+
+    def _query(self, parameters: dict[str, str]) -> Mapping[str, object]:
+        if self._has_requested:
+            self._sleep(self._pace)
+        self._has_requested = True
+        payload = self._transport(f"{_QUOTE_URL}?{urlencode(parameters)}")
+        self._raise_if_provider_error(payload)
+        return payload
 
     @staticmethod
     def _raise_if_provider_error(payload: Mapping[str, object]) -> None:
