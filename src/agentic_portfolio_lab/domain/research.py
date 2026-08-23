@@ -294,6 +294,7 @@ class ResearchBatch:
     as_of_timestamp: datetime
     packets: tuple[ResearchPacket, ...] | list[ResearchPacket]
     screening_run_id: UUID | None = None
+    revision_of_decision_cycle_id: UUID | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "batch_id", _require_identifier(self.batch_id, field_name="batch_id"))
@@ -304,6 +305,10 @@ class ResearchBatch:
         object.__setattr__(self, "manager_type", _canonical_upper_text(self.manager_type, field_name="manager_type"))
         if self.screening_run_id is not None and not isinstance(self.screening_run_id, UUID):
             raise TypeError("screening_run_id must be a UUID")
+        if self.revision_of_decision_cycle_id is not None and not isinstance(self.revision_of_decision_cycle_id, UUID):
+            raise TypeError("revision_of_decision_cycle_id must be a UUID")
+        if self.revision_of_decision_cycle_id == self.decision_cycle_id:
+            raise ValueError("revision_of_decision_cycle_id must differ from decision_cycle_id")
         created_at = _require_aware_datetime(self.created_at, field_name="created_at")
         as_of_timestamp = _require_aware_datetime(self.as_of_timestamp, field_name="as_of_timestamp")
         if created_at < as_of_timestamp:

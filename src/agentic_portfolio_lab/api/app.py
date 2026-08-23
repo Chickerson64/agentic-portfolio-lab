@@ -14,7 +14,7 @@ from agentic_portfolio_lab.application.build_research import BuildResearchServic
 from agentic_portfolio_lab.application.bootstrap_overview import BootstrapOverviewService
 from agentic_portfolio_lab.infrastructure.alpha_vantage import AlphaVantageResearchProvider
 from agentic_portfolio_lab.application.wave2_commands import BenchmarkFulfillmentService, CashEventService
-from agentic_portfolio_lab.application.decision_commands import DecisionApprovalService, RunValueManagerService
+from agentic_portfolio_lab.application.decision_commands import DecisionApprovalService, RunValueManagerService, ReviseDecisionCycleService
 from agentic_portfolio_lab.domain.openai_value_manager import OpenAIValueManager
 from agentic_portfolio_lab.domain.value_manager import ValueManager
 from agentic_portfolio_lab.application.managed_execution import ManagedPaperExecutionService
@@ -92,6 +92,7 @@ def create_app(
             or (DecisionApprovalService(store) if store is not None else None),
             managed_execution_service=managed_execution_service
             or (ManagedPaperExecutionService(store) if store is not None else None),
+            revision_service=ReviseDecisionCycleService(store) if store is not None else None,
         )
     )
     return app

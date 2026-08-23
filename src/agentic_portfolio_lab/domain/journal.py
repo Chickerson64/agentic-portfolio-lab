@@ -71,15 +71,18 @@ class DecisionJournalEntry:
             if evaluation.safety_validation != self.risk_validation_result:
                 raise ValueError("two_layer_evaluation safety_validation must match risk_validation_result")
             if evaluation.manager_assessment is None:
-                raise ValueError("current policy references require a Manager Constitution assessment")
-            assessment = evaluation.manager_assessment
-            if assessment.manager_risk_constitution != self.policy_reference.manager_risk_constitution:
+                if self.risk_validation_result.passed:
+                    raise ValueError("passed current-policy validation requires a Manager Constitution assessment")
+                assessment = None
+            else:
+                assessment = evaluation.manager_assessment
+            if assessment is not None and assessment.manager_risk_constitution != self.policy_reference.manager_risk_constitution:
                 raise ValueError("manager assessment constitution must match policy_reference")
-            if assessment.decision_result != self.decision_result:
+            if assessment is not None and assessment.decision_result != self.decision_result:
                 raise ValueError("manager assessment must belong to decision_result")
-            if assessment.manager_risk_constitution.manager_type != self.decision_result.manager_type:
+            if assessment is not None and assessment.manager_risk_constitution.manager_type != self.decision_result.manager_type:
                 raise ValueError("manager policy manager_type must match decision_result")
-            if assessment.manager_risk_constitution.loading_source != self.policy_reference.manager_risk_constitution.loading_source:
+            if assessment is not None and assessment.manager_risk_constitution.loading_source != self.policy_reference.manager_risk_constitution.loading_source:
                 raise ValueError("manager policy loading source must match policy_reference")
             from .policy import InvestmentConstitutionReference
 
@@ -89,8 +92,8 @@ class DecisionJournalEntry:
             if any(rule.policy_version != expected_version for rule in self.risk_validation_result.rule_results):
                 raise ValueError("System Safety rule policy_version must match policy_reference")
             recommendation = self.decision_result.recommendation
-            snapshot = assessment.risk_evaluation_snapshot
-            if recommendation.action.value == "BUY":
+            snapshot = None if assessment is None else assessment.risk_evaluation_snapshot
+            if assessment is not None and recommendation.action.value == "BUY":
                 assert snapshot is not None  # Guaranteed by ManagerConstitutionAssessment.
                 if snapshot.portfolio != self.decision_result.context.portfolio:
                     raise ValueError("RiskEvaluationSnapshot portfolio must match decision_result")

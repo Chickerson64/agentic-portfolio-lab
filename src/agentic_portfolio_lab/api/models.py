@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict
 from agentic_portfolio_lab.dashboard import HistoryPanel
 from agentic_portfolio_lab.domain.approval import DecisionApproval
 from agentic_portfolio_lab.domain.journal import DecisionJournalEntry
+from agentic_portfolio_lab.domain.policy import CurrentPolicyReference
 from agentic_portfolio_lab.domain.performance import PerformanceComparison, PerformanceSnapshot
 from agentic_portfolio_lab.domain.portfolio import SecurityIdentity
 from agentic_portfolio_lab.domain.research import MissingData, ResearchBatch, ResearchPacket
@@ -114,6 +115,9 @@ class ValidationRuleResponse(ApiModel):
     reason: str
     actual_value: str | None
     allowed_threshold: str | None
+    layer: str
+    policy_version: str | None
+    input_references: tuple[str, ...]
 
 
 class ValidationResponse(ApiModel):
@@ -121,6 +125,27 @@ class ValidationResponse(ApiModel):
     validation_timestamp: str
     rules: tuple[ValidationRuleResponse, ...]
     validated_trade_id: str | None
+
+
+class AdvisoryFindingResponse(ApiModel):
+    finding_id: str
+    severity: str
+    reason: str
+    actual_value: str | None
+    guidance_value: str | None
+    input_references: tuple[str, ...]
+
+
+class PolicyEvaluationResponse(ApiModel):
+    policy_kind: str
+    investment_constitution_version: str | None
+    investment_constitution_hash: str | None
+    system_safety_envelope_version: str | None
+    system_safety_envelope_hash: str | None
+    manager_risk_constitution_version: str | None
+    manager_risk_constitution_hash: str | None
+    mechanically_executable: bool
+    advisory_findings: tuple[AdvisoryFindingResponse, ...]
 
 
 class ReviewerFindingResponse(ApiModel):
@@ -182,6 +207,7 @@ class DecisionMemoResponse(ApiModel):
     produced_at: str
     recommendation: RecommendationResponse
     validation: ValidationResponse
+    policy_evaluation: PolicyEvaluationResponse
     reviewer: ReviewerResponse | None
     approval: ApprovalResponse | None
     execution: ExecutionResponse | None
@@ -317,6 +343,16 @@ class BuildResearchResponse(ApiModel):
     packet_count: int
     source_provider_identity: str
     as_of_timestamp: str
+
+
+class RevisionDecisionCommand(ApiModel):
+    occurred_at: datetime
+
+
+class RevisionDecisionResponse(ApiModel):
+    batch_id: str
+    decision_cycle_id: str
+    revision_of_decision_cycle_id: str
 
 
 class BootstrapOverviewResponse(ApiModel):
@@ -577,16 +613,51 @@ def decision_memo_response(
                     status=rule.status.value,
                     reason=rule.reason,
                     actual_value=_audit_value(rule.actual_value),
-                    allowed_threshold=_audit_value(rule.allowed_threshold),
+                allowed_threshold=_audit_value(rule.allowed_threshold),
+                    layer=rule.layer.value,
+                    policy_version=rule.policy_version,
+                    input_references=tuple(rule.input_references),
                 )
                 for rule in validation.rule_results
             ),
             validated_trade_id=None if validation.validated_trade is None else str(validation.validated_trade.validated_trade_id),
         ),
+        policy_evaluation=_policy_evaluation_response(journal),
         reviewer=_reviewer_response(journal),
         approval=_approval_response(approval),
         execution=execution_response(executed_trade),
         execution_readiness=execution_readiness_response(journal, approval, executed_trade),
+    )
+
+
+def _policy_evaluation_response(journal: DecisionJournalEntry) -> PolicyEvaluationResponse:
+    reference = journal.policy_reference
+    assessment = None if journal.two_layer_evaluation is None else journal.two_layer_evaluation.manager_assessment
+    findings = () if assessment is None else tuple(
+        AdvisoryFindingResponse(
+            finding_id=item.finding_id, severity=item.severity.value, reason=item.reason,
+            actual_value=_audit_value(item.actual_value), guidance_value=_audit_value(item.guidance_value),
+            input_references=tuple(item.input_references),
+        ) for item in assessment.findings
+    )
+    if isinstance(reference, CurrentPolicyReference):
+        return PolicyEvaluationResponse(
+            policy_kind=reference.kind.value,
+            investment_constitution_version=reference.investment_constitution.constitution_version,
+            investment_constitution_hash=reference.investment_constitution.content_hash,
+            system_safety_envelope_version=reference.system_safety_envelope.system_safety_envelope_version.value,
+            system_safety_envelope_hash=reference.system_safety_envelope.content_hash,
+            manager_risk_constitution_version=reference.manager_risk_constitution.risk_constitution_version.value,
+            manager_risk_constitution_hash=reference.manager_risk_constitution.content_hash,
+            mechanically_executable=journal.risk_validation_result.passed and journal.risk_validation_result.validated_trade is not None,
+            advisory_findings=findings,
+        )
+    return PolicyEvaluationResponse(
+        policy_kind=reference.kind.value, investment_constitution_version=None, investment_constitution_hash=None,
+        system_safety_envelope_version=None, system_safety_envelope_hash=None,
+        manager_risk_constitution_version=None, manager_risk_constitution_hash=None,
+        mechanically_executable=journal.risk_validation_result.passed and journal.risk_validation_result.validated_trade is not None,
+        advisory_findings=(),
     )
 
 

@@ -173,6 +173,7 @@ def decode_run_state(value: Any) -> PersistedRunState:
             research_batch=research_batch,
             constitution=raw_context.constitution,
             prior_reviewer_feedback=raw_context.prior_reviewer_feedback,
+            manager_risk_constitution=raw_context.manager_risk_constitution,
         )
         decision_result = ValueManagerDecisionResult(
             context=context,

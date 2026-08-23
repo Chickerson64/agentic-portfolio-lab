@@ -241,6 +241,27 @@ def _serialize_context(context: ValueManagerDecisionContext) -> dict[str, object
         "constitution_version": context.constitution_version,
         "portfolio": _serialize_portfolio(context.portfolio),
         "constitution": _serialize_constitution(context.constitution),
+        "manager_risk_constitution": None if context.manager_risk_constitution is None else {
+            "version": context.manager_risk_constitution.risk_constitution_version.value,
+            "content_hash": context.manager_risk_constitution.content_hash,
+            "normal_starter_guidance": {
+                "minimum": str(context.manager_risk_constitution.sizing_guidance.typical_starter_weight_min),
+                "maximum": str(context.manager_risk_constitution.sizing_guidance.typical_starter_weight_max),
+                "confidence_has_sizing_authority": context.manager_risk_constitution.sizing_guidance.confidence_has_sizing_authority,
+            },
+            "risk_personality": None if context.manager_risk_constitution.risk_personality is None else {
+                "summary": context.manager_risk_constitution.risk_personality.summary,
+                "concentration_guidance": context.manager_risk_constitution.risk_personality.concentration_guidance,
+                "turnover_guidance": context.manager_risk_constitution.risk_personality.turnover_guidance,
+                "cash_guidance": context.manager_risk_constitution.risk_personality.cash_guidance,
+                "deviation_expectations": list(context.manager_risk_constitution.risk_personality.deviation_expectations),
+                "reviewer_focus": list(context.manager_risk_constitution.risk_personality.reviewer_focus),
+            },
+            "evidence_bands": [
+                {"band": band.band.value, "description": band.description, "reachable": band.reachable}
+                for band in context.manager_risk_constitution.evidence_bands
+            ],
+        },
         "research_batch": {
             "batch_id": batch.batch_id,
             "decision_cycle_id": str(batch.decision_cycle_id),

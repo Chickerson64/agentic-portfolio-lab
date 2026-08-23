@@ -11,7 +11,7 @@ from agentic_portfolio_lab.application.refresh_prices import RefreshPricesServic
 from agentic_portfolio_lab.application.build_research import BuildResearchService
 from agentic_portfolio_lab.application.bootstrap_overview import BootstrapOverviewService
 from agentic_portfolio_lab.application.wave2_commands import BenchmarkFulfillmentService, CashEventService
-from agentic_portfolio_lab.application.decision_commands import DecisionApprovalService, DecisionCommandConflict, RunValueManagerService
+from agentic_portfolio_lab.application.decision_commands import DecisionApprovalService, DecisionCommandConflict, RunValueManagerService, ReviseDecisionCycleService
 from agentic_portfolio_lab.domain.approval import ApprovalDecision
 from agentic_portfolio_lab.application.managed_execution import ManagedPaperExecutionError, ManagedPaperExecutionService
 from agentic_portfolio_lab.domain.market_prices import MarketPriceConfigurationError, MarketPriceError
@@ -33,6 +33,7 @@ from .models import (
     CashEventResponse,
     BenchmarkFulfillmentResponse,
     DecisionApprovalCommand,
+    RevisionDecisionCommand, RevisionDecisionResponse,
     RunValueManagerCommand,
     decision_memo_response,
     ExecutePaperTradeResponse,
@@ -64,6 +65,7 @@ def create_router(
     run_value_manager_service: RunValueManagerService | None = None,
     decision_approval_service: DecisionApprovalService | None = None,
     managed_execution_service: ManagedPaperExecutionService | None = None,
+    revision_service: ReviseDecisionCycleService | None = None,
 ) -> APIRouter:
     router = APIRouter()
 
@@ -196,6 +198,19 @@ def create_router(
     @router.post("/commands/decisions/{decision_cycle_id}/reject", response_model=DecisionMemoResponse)
     def reject_decision(decision_cycle_id: str, command: DecisionApprovalCommand) -> DecisionMemoResponse:
         return _record_human_decision(decision_cycle_id, command, ApprovalDecision.REJECTED)
+
+    @router.post("/commands/decisions/{decision_cycle_id}/revise", response_model=RevisionDecisionResponse)
+    def revise_decision(decision_cycle_id: UUID, command: RevisionDecisionCommand) -> RevisionDecisionResponse:
+        if revision_service is None:
+            raise HTTPException(status_code=503, detail={"code": "durable_state_required", "message": "decision revisions require configured local SQLite state"})
+        try:
+            batch = revision_service.create(decision_cycle_id=decision_cycle_id, occurred_at=command.occurred_at)
+        except DecisionCommandConflict as error:
+            raise HTTPException(status_code=409, detail={"code": "decision_conflict", "message": str(error)}) from error
+        except (TypeError, ValueError) as error:
+            raise HTTPException(status_code=422, detail={"code": "decision_revision_invalid", "message": str(error)}) from error
+        assert batch.revision_of_decision_cycle_id is not None
+        return RevisionDecisionResponse(batch_id=batch.batch_id, decision_cycle_id=str(batch.decision_cycle_id), revision_of_decision_cycle_id=str(batch.revision_of_decision_cycle_id))
 
     @router.post("/commands/decisions/{decision_cycle_id}/execute-paper-trade", response_model=ExecutePaperTradeResponse)
     async def execute_paper_trade(decision_cycle_id: UUID, executed_at: datetime, request: Request) -> ExecutePaperTradeResponse:

@@ -7,6 +7,7 @@ from typing import Protocol, runtime_checkable
 from uuid import UUID
 
 from .constitution import ValueManagerConstitution
+from .policy import ManagerRiskConstitution
 from .portfolio import Portfolio, _require_non_empty_text
 from .recommendations import PortfolioRecommendation
 from .research import ResearchBatch
@@ -36,6 +37,7 @@ class ValueManagerDecisionContext:
     research_batch: ResearchBatch
     constitution: ValueManagerConstitution
     prior_reviewer_feedback: tuple[str, ...] | list[str] = ()
+    manager_risk_constitution: ManagerRiskConstitution | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.portfolio, Portfolio):
@@ -48,6 +50,11 @@ class ValueManagerDecisionContext:
             raise ValueError("research_batch manager_type must be VALUE")
         if not isinstance(self.constitution, ValueManagerConstitution):
             raise TypeError("constitution must be a ValueManagerConstitution")
+        if self.manager_risk_constitution is not None:
+            if not isinstance(self.manager_risk_constitution, ManagerRiskConstitution):
+                raise TypeError("manager_risk_constitution must be a ManagerRiskConstitution or None")
+            if self.manager_risk_constitution.manager_type != _VALUE_MANAGER_TYPE:
+                raise ValueError("manager_risk_constitution manager_type must be VALUE")
         object.__setattr__(self, "prior_reviewer_feedback", _normalize_feedback(self.prior_reviewer_feedback))
 
     @property

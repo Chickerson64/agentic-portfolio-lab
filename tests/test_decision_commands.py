@@ -13,6 +13,7 @@ from agentic_portfolio_lab.application.decision_commands import (
     DecisionApprovalService,
     DecisionCommandConflict,
     RunValueManagerService,
+    ReviseDecisionCycleService,
     _eligible_buy_observation,
 )
 from agentic_portfolio_lab.api.app import create_app
@@ -37,8 +38,8 @@ START = datetime(2026, 8, 21, 14, 0, tzinfo=UTC)
 
 
 class _Manager:
-    def __init__(self, action: str = "BUY", error: Exception | None = None) -> None:
-        self.action, self.error, self.calls = action, error, 0
+    def __init__(self, action: str = "BUY", error: Exception | None = None, target_weight: Decimal = Decimal("0.25")) -> None:
+        self.action, self.error, self.calls, self.target_weight = action, error, 0, target_weight
 
     def decide(self, context):
         self.calls += 1
@@ -48,7 +49,7 @@ class _Manager:
         return PortfolioRecommendation(
             action=self.action,
             ticker=context.research_batch.packets[0].ticker if self.action == "BUY" else None,
-            target_weight=Decimal("0.25") if self.action == "BUY" else None,
+            target_weight=self.target_weight if self.action == "BUY" else None,
             decision_rationale="Structured test recommendation.",
             investment_thesis="A test thesis." if self.action == "BUY" else None,
             valuation="Test valuation.",
@@ -94,6 +95,45 @@ def test_buy_reuses_batch_cycle_persists_null_reviewer_and_approval_survives_res
     assert reopened.approvals[0].journal_entry is reopened.journal_entries[0]
     assert reopened.history_entries[0].approval is reopened.approvals[0]
     assert approval.decision_cycle_id == batch.decision_cycle_id
+
+
+@pytest.mark.parametrize("target", (Decimal("0.25"), Decimal("0.80"), Decimal("1")))
+def test_current_production_policy_keeps_advisory_sizing_non_gating(tmp_path, target) -> None:
+    store, _, _ = _prepared_store(tmp_path)
+    journal = RunValueManagerService(store, manager=_Manager(target_weight=target)).run(occurred_at=START + timedelta(minutes=3)).journal_entry
+    assert journal.risk_validation_result.passed
+    assert journal.risk_validation_result.validated_trade is not None
+    assert journal.risk_validation_result.validated_trade.proposal.target_weight == target
+    assert journal.two_layer_evaluation is not None and journal.two_layer_evaluation.manager_assessment is not None
+    finding = next(item for item in journal.two_layer_evaluation.manager_assessment.findings if item.finding_id == "NORMAL_STARTER_GUIDANCE_DEVIATION")
+    assert finding.severity.value == ("MATERIAL" if target > Decimal("0.10") else "INFO")
+
+
+def test_fake_crm_current_policy_is_visible_separately_in_api(tmp_path) -> None:
+    store, batch, price = _prepared_store(tmp_path)
+    packet = replace(batch.packets[0], ticker="CRM", candidate_id="crm")
+    crm_batch = replace(batch, batch_id="crm-batch", decision_cycle_id=uuid4(), created_at=START + timedelta(minutes=2), packets=(packet,))
+    crm_price = replace(price, security=SecurityIdentity("CRM", "EQUITY", "NASDAQ", "USD"))
+    store.save_transition(replace(store.open_run(), research_batches=(batch, crm_batch), price_observations=(price, crm_price)))
+    journal = RunValueManagerService(store, manager=_Manager(target_weight=Decimal("0.25"))).run(occurred_at=START + timedelta(minutes=3)).journal_entry
+    response = decision_memo_response(journal, None, None)
+    assert response.recommendation.ticker == "CRM"
+    assert response.recommendation.target_weight == "0.25"
+    assert response.policy_evaluation.mechanically_executable
+    assert any(item.finding_id == "NORMAL_STARTER_GUIDANCE_DEVIATION" and item.severity == "MATERIAL" for item in response.policy_evaluation.advisory_findings)
+    assert response.reviewer is None and response.execution_readiness.reason_code == "NOT_APPROVED"
+
+
+def test_rejected_cycle_revision_is_linear_and_survives_restart(tmp_path) -> None:
+    store, _, _ = _prepared_store(tmp_path)
+    journal = RunValueManagerService(store, manager=_Manager()).run(occurred_at=START + timedelta(minutes=3)).journal_entry
+    DecisionApprovalService(store).decide(decision_cycle_id=journal.decision_cycle_id, decision=ApprovalDecision.REJECTED, decision_maker_id="operator", decided_at=START + timedelta(minutes=4))
+    revised = ReviseDecisionCycleService(store).create(decision_cycle_id=journal.decision_cycle_id, occurred_at=START + timedelta(minutes=5))
+    assert revised.revision_of_decision_cycle_id == journal.decision_cycle_id
+    with pytest.raises(DecisionCommandConflict, match="direct revision child"):
+        ReviseDecisionCycleService(store).create(decision_cycle_id=journal.decision_cycle_id, occurred_at=START + timedelta(minutes=6))
+    reopened = SQLiteLocalRunStore(tmp_path / "run.sqlite").open_run()
+    assert reopened is not None and any(item.decision_cycle_id == revised.decision_cycle_id for item in reopened.research_batches)
 
 
 def test_hold_is_journaled_and_can_be_rejected_without_execution(tmp_path) -> None:
