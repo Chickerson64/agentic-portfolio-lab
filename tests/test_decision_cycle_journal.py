@@ -339,6 +339,8 @@ def test_journal_is_immutable_and_does_not_duplicate_raw_research_content() -> N
         "risk_validation_result",
         "journaled_at",
         "reviewer_result",
+        "policy_reference",
+        "two_layer_evaluation",
     }
     assert "sections" not in {field.name for field in fields(DecisionJournalEntry)}
     assert "evidence_items" not in {field.name for field in fields(DecisionJournalEntry)}

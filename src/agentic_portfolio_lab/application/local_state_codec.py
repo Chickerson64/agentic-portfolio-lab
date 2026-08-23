@@ -34,10 +34,10 @@ def _types() -> dict[str, type[object]]:
     # Imports are intentionally explicit: only known local domain/application
     # artifacts may be rehydrated from a durable database document.
     from agentic_portfolio_lab.dashboard import DecisionHistoryArtifacts
-    from agentic_portfolio_lab.domain import approval, benchmark_fulfillment, cash_events, constitution, journal, performance, portfolio, provider_fundamentals, recommendations, research, research_provider, reviewer, risk_validation, screening, simulated_execution, trades, universe, valuation, value_manager, value_manager_workflow
+    from agentic_portfolio_lab.domain import approval, benchmark_fulfillment, cash_events, constitution, journal, performance, policy, portfolio, provider_fundamentals, recommendations, research, research_provider, reviewer, risk_validation, screening, simulated_execution, trades, universe, valuation, value_manager, value_manager_workflow
 
     modules = (
-        approval, benchmark_fulfillment, cash_events, constitution, journal, performance, portfolio,
+        approval, benchmark_fulfillment, cash_events, constitution, journal, performance, policy, portfolio,
         provider_fundamentals, recommendations, research, research_provider, reviewer, risk_validation,
         screening, simulated_execution, trades, universe, valuation, value_manager, value_manager_workflow,
     )
@@ -156,6 +156,7 @@ def decode_run_state(value: Any) -> PersistedRunState:
     from agentic_portfolio_lab.domain.approval import DecisionApproval
     from agentic_portfolio_lab.domain.journal import DecisionJournalEntry
     from agentic_portfolio_lab.domain.reviewer import AIReviewerReviewContext, ReviewerResult
+    from agentic_portfolio_lab.domain.risk_validation import ManagerConstitutionAssessment, TwoLayerEvaluationResult
     from agentic_portfolio_lab.domain.simulated_execution import SimulatedExecutionResult
     from agentic_portfolio_lab.domain.value_manager import ValueManagerDecisionContext
     from agentic_portfolio_lab.domain.value_manager_workflow import ValueManagerDecisionResult
@@ -179,6 +180,21 @@ def decode_run_state(value: Any) -> PersistedRunState:
             produced_at=journal.decision_result.produced_at,
         )
         validation = replace(journal.risk_validation_result, decision_result=decision_result)
+        two_layer_evaluation = journal.two_layer_evaluation
+        if two_layer_evaluation is not None:
+            assessment = two_layer_evaluation.manager_assessment
+            if assessment is not None:
+                assessment = ManagerConstitutionAssessment(
+                    decision_result=decision_result,
+                    assessment_timestamp=assessment.assessment_timestamp,
+                    manager_risk_constitution=assessment.manager_risk_constitution,
+                    risk_evaluation_snapshot=assessment.risk_evaluation_snapshot,
+                    findings=assessment.findings,
+                )
+            two_layer_evaluation = TwoLayerEvaluationResult(
+                safety_validation=validation,
+                manager_assessment=assessment,
+            )
         reviewer = journal.reviewer_result
         if reviewer is not None:
             reviewer_context = AIReviewerReviewContext(
@@ -197,6 +213,8 @@ def decode_run_state(value: Any) -> PersistedRunState:
             risk_validation_result=validation,
             journaled_at=journal.journaled_at,
             reviewer_result=reviewer,
+            policy_reference=journal.policy_reference,
+            two_layer_evaluation=two_layer_evaluation,
         ))
     journals = {journal.decision_cycle_id: journal for journal in canonical_journals}
     approvals = tuple(

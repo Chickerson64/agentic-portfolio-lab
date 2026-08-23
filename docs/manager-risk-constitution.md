@@ -173,6 +173,16 @@ Existing v0.1 journals remain authoritative and immutable. A
 policy artifact, version, source, or hash. `CurrentPolicyReference` retains the
 exact investment, safety, and manager-risk artifacts for future current cycles.
 
+## Durable evaluation lineage
+
+When a future current-policy cycle is journaled, the immutable journal carries
+one `CurrentPolicyReference` and its `TwoLayerEvaluationResult`. The result
+retains System Safety rule results and the separate Manager Constitution
+assessment (including its synchronized `RiskEvaluationSnapshot`) without
+turning advisory severity into an execution gate. Reopening the SQLite state
+reconstructs those artifacts exactly; pre-Lane-3 documents that omit the fields
+decode as `LegacyPolicyReference` with no fabricated policy or assessment.
+
 ## Multi-manager fairness
 
 Value, Growth, and Conservative receive equal funding, evidence cutoff,
