@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from urllib.parse import parse_qs, urlparse
 
@@ -9,9 +9,11 @@ import pytest
 from agentic_portfolio_lab.application.fundamental_metrics import FundamentalMetricInputs, derive_fundamental_metrics
 from agentic_portfolio_lab.application.market_configuration import RESEARCH_CANDIDATE_UNIVERSE
 from agentic_portfolio_lab.application.refresh_fundamentals import (
+    OVERVIEW_REUSE_MAX_AGE,
     RefreshFundamentalsService,
     provider_fundamental_record_from_normalized,
 )
+from agentic_portfolio_lab.domain.portfolio import SecurityIdentity
 from agentic_portfolio_lab.domain.provider_fundamentals import ProviderEndpoint, ProviderFundamentalRecord, ReuseStatus
 from agentic_portfolio_lab.domain.research import MissingData, MissingDataReason
 from agentic_portfolio_lab.domain.research_provider import ResearchProviderError
@@ -21,6 +23,7 @@ from agentic_portfolio_lab.infrastructure.alpha_vantage import AlphaVantageResea
 UTC = timezone.utc
 AS_OF = datetime(2026, 8, 17, 16, tzinfo=UTC)
 CACHED_AT = datetime(2026, 7, 1, 12, tzinfo=UTC)
+RECENT_AT = AS_OF - timedelta(days=2)
 PERIOD = date(2026, 6, 30)
 
 
@@ -95,6 +98,35 @@ def _cached_record(endpoint: ProviderEndpoint, *, fiscal_period=PERIOD, fetched_
     )
 
 
+def _cached_overview(
+    *,
+    fetched_at=CACHED_AT,
+    fiscal_period=PERIOD,
+    facts: tuple[tuple[str, str], ...] | None = None,
+    provider_identity: str = "alpha-vantage",
+    security=None,
+) -> ProviderFundamentalRecord:
+    return ProviderFundamentalRecord(
+        record_id="cached-OVERVIEW",
+        security=security or _security(),
+        provider_identity=provider_identity,
+        endpoint=ProviderEndpoint.OVERVIEW,
+        fiscal_period=fiscal_period,
+        source_date=PERIOD,
+        fetched_at=fetched_at,
+        facts=facts if facts is not None else (("latest_quarter", "2026-06-30"), ("marker", "OVERVIEW")),
+    )
+
+
+def _statement_payloads() -> dict[str, object]:
+    return {
+        "INCOME_STATEMENT": _income(),
+        "BALANCE_SHEET": _balance(),
+        "CASH_FLOW": _cash_flow(),
+        "EARNINGS": _earnings(),
+    }
+
+
 def _cached_statements(**overrides: ProviderFundamentalRecord) -> tuple[ProviderFundamentalRecord, ...]:
     records = {
         ProviderEndpoint.INCOME_STATEMENT: _cached_record(ProviderEndpoint.INCOME_STATEMENT),
@@ -116,6 +148,26 @@ def _provider(payloads, calls):
         return payloads[function]
 
     return AlphaVantageResearchProvider(api_key="key", transport=transport, sleep=lambda _: None)
+
+
+def test_non_datetime_as_of_fails_before_provider_io():
+    calls = []
+    service = RefreshFundamentalsService(provider=_provider({}, calls), now=lambda: AS_OF)
+
+    with pytest.raises(TypeError, match="as_of must be a datetime"):
+        service.refresh(_security(), (), "2026-08-17T16:00:00Z")  # type: ignore[arg-type]
+
+    assert calls == []
+
+
+def test_timezone_naive_as_of_fails_before_provider_io():
+    calls = []
+    service = RefreshFundamentalsService(provider=_provider({}, calls), now=lambda: AS_OF)
+
+    with pytest.raises(ValueError, match="as_of must be timezone-aware"):
+        service.refresh(_security(), (), AS_OF.replace(tzinfo=None))
+
+    assert calls == []
 
 
 def test_reuse_fetches_overview_only_and_keeps_cached_statement_timestamps():
@@ -188,6 +240,166 @@ def test_unparseable_latest_quarter_fails_closed_without_statement_calls():
     with pytest.raises(ResearchProviderError, match="LatestQuarter"):
         service.refresh(_security(), _cached_statements(), AS_OF)
     assert calls == ["OVERVIEW"]
+
+
+def test_complete_statement_set_still_fetches_overview_when_cached_overview_is_recent():
+    calls = []
+    cached = (_cached_overview(fetched_at=RECENT_AT), *_cached_statements())
+    service = RefreshFundamentalsService(provider=_provider({"OVERVIEW": _overview()}, calls), now=lambda: AS_OF)
+    result = service.refresh(_security(), cached, AS_OF)
+
+    assert calls == ["OVERVIEW"]
+    assert result.status_for(ProviderEndpoint.OVERVIEW).reuse_status is ReuseStatus.FETCHED_THIS_CYCLE
+    assert result.status_for(ProviderEndpoint.INCOME_STATEMENT).reuse_status is ReuseStatus.REUSED_CURRENT
+
+
+def test_recent_cached_overview_without_statements_reuses_overview_and_fetches_four():
+    calls = []
+    overview = _cached_overview(fetched_at=RECENT_AT)
+    service = RefreshFundamentalsService(provider=_provider(_statement_payloads(), calls), now=lambda: AS_OF)
+    result = service.refresh(_security(), (overview,), AS_OF)
+
+    assert calls == ["INCOME_STATEMENT", "BALANCE_SHEET", "CASH_FLOW", "EARNINGS"]
+    overview_status = result.status_for(ProviderEndpoint.OVERVIEW)
+    assert overview_status.reuse_status is ReuseStatus.REUSED_CURRENT
+    assert overview_status.record is overview
+    assert overview_status.record.fetched_at == RECENT_AT
+    assert overview_status.record.source_date == PERIOD
+    assert overview_status.record.facts == overview.facts
+    assert overview_status.record.record_id == "cached-OVERVIEW"
+    assert all(result.status_for(endpoint).reuse_status is ReuseStatus.FETCHED_THIS_CYCLE for endpoint in _STATEMENT_LIKE)
+
+
+def test_overview_reuse_requires_exact_security_identity():
+    calls = []
+    other = SecurityIdentity(
+        ticker=_security().ticker,
+        security_type=_security().security_type,
+        exchange="NYSE",
+        currency=_security().currency,
+    )
+    payloads = {"OVERVIEW": _overview(), **_statement_payloads()}
+    service = RefreshFundamentalsService(provider=_provider(payloads, calls), now=lambda: AS_OF)
+    result = service.refresh(_security(), (_cached_overview(fetched_at=RECENT_AT, security=other),), AS_OF)
+
+    assert calls[0] == "OVERVIEW"
+    assert result.status_for(ProviderEndpoint.OVERVIEW).reuse_status is ReuseStatus.FETCHED_THIS_CYCLE
+
+
+def test_overview_reuse_requires_alpha_vantage_provider_identity():
+    calls = []
+    payloads = {"OVERVIEW": _overview(), **_statement_payloads()}
+    service = RefreshFundamentalsService(provider=_provider(payloads, calls), now=lambda: AS_OF)
+    result = service.refresh(
+        _security(),
+        (_cached_overview(fetched_at=RECENT_AT, provider_identity="twelve-data"),),
+        AS_OF,
+    )
+
+    assert calls[0] == "OVERVIEW"
+    assert result.status_for(ProviderEndpoint.OVERVIEW).reuse_status is ReuseStatus.FETCHED_THIS_CYCLE
+
+
+def test_overview_older_than_reuse_max_age_is_fetched():
+    calls = []
+    too_old = AS_OF - OVERVIEW_REUSE_MAX_AGE - timedelta(seconds=1)
+    payloads = {"OVERVIEW": _overview(), **_statement_payloads()}
+    service = RefreshFundamentalsService(provider=_provider(payloads, calls), now=lambda: AS_OF)
+    result = service.refresh(_security(), (_cached_overview(fetched_at=too_old),), AS_OF)
+
+    assert calls[0] == "OVERVIEW"
+    assert result.status_for(ProviderEndpoint.OVERVIEW).reuse_status is ReuseStatus.FETCHED_THIS_CYCLE
+    assert (AS_OF - too_old) > OVERVIEW_REUSE_MAX_AGE
+
+
+def test_overview_exactly_at_reuse_max_age_is_reused():
+    calls = []
+    boundary = AS_OF - OVERVIEW_REUSE_MAX_AGE
+    overview = _cached_overview(fetched_at=boundary)
+    service = RefreshFundamentalsService(provider=_provider(_statement_payloads(), calls), now=lambda: AS_OF)
+    result = service.refresh(_security(), (overview,), AS_OF)
+
+    assert calls == ["INCOME_STATEMENT", "BALANCE_SHEET", "CASH_FLOW", "EARNINGS"]
+    overview_status = result.status_for(ProviderEndpoint.OVERVIEW)
+    assert overview_status.reuse_status is ReuseStatus.REUSED_CURRENT
+    assert overview_status.record is overview
+    assert overview_status.record.fetched_at == boundary
+    assert all(
+        result.status_for(endpoint).reuse_status is ReuseStatus.FETCHED_THIS_CYCLE
+        for endpoint in _STATEMENT_LIKE
+    )
+
+
+def test_overview_fetched_at_after_as_of_is_not_reused():
+    calls = []
+    payloads = {"OVERVIEW": _overview(), **_statement_payloads()}
+    service = RefreshFundamentalsService(provider=_provider(payloads, calls), now=lambda: AS_OF)
+    result = service.refresh(
+        _security(),
+        (_cached_overview(fetched_at=AS_OF + timedelta(minutes=1)),),
+        AS_OF,
+    )
+
+    assert calls[0] == "OVERVIEW"
+    assert result.status_for(ProviderEndpoint.OVERVIEW).reuse_status is ReuseStatus.FETCHED_THIS_CYCLE
+
+
+def test_overview_without_parseable_latest_quarter_is_not_reused():
+    calls = []
+    payloads = {"OVERVIEW": _overview(), **_statement_payloads()}
+    service = RefreshFundamentalsService(provider=_provider(payloads, calls), now=lambda: AS_OF)
+    missing = _cached_overview(fetched_at=RECENT_AT, fiscal_period=None, facts=(("company_name", "Microsoft"),))
+    bad = _cached_overview(
+        fetched_at=RECENT_AT,
+        fiscal_period=None,
+        facts=(("latest_quarter", "Q2 2026"),),
+    )
+
+    missing_result = service.refresh(_security(), (missing,), AS_OF)
+    assert calls[0] == "OVERVIEW"
+    assert missing_result.status_for(ProviderEndpoint.OVERVIEW).reuse_status is ReuseStatus.FETCHED_THIS_CYCLE
+
+    calls.clear()
+    bad_result = service.refresh(_security(), (bad,), AS_OF)
+    assert calls[0] == "OVERVIEW"
+    assert bad_result.status_for(ProviderEndpoint.OVERVIEW).reuse_status is ReuseStatus.FETCHED_THIS_CYCLE
+
+
+def test_reused_overview_is_stale_when_fetched_statements_are_newer():
+    calls = []
+    older_quarter = date(2026, 3, 31)
+    overview = _cached_overview(
+        fetched_at=RECENT_AT,
+        fiscal_period=older_quarter,
+        facts=(("latest_quarter", "2026-03-31"), ("marker", "OVERVIEW")),
+    )
+    service = RefreshFundamentalsService(provider=_provider(_statement_payloads(), calls), now=lambda: AS_OF)
+    result = service.refresh(_security(), (overview,), AS_OF)
+
+    assert calls == ["INCOME_STATEMENT", "BALANCE_SHEET", "CASH_FLOW", "EARNINGS"]
+    overview_status = result.status_for(ProviderEndpoint.OVERVIEW)
+    assert overview_status.reuse_status is ReuseStatus.STALE
+    assert overview_status.record is overview
+    assert overview_status.record.fetched_at == RECENT_AT
+    assert overview_status.record.source_date == PERIOD
+    assert overview.fiscal_period == older_quarter
+    assert all(result.status_for(endpoint).reuse_status is ReuseStatus.FETCHED_THIS_CYCLE for endpoint in _STATEMENT_LIKE)
+    assert result.status_for(ProviderEndpoint.INCOME_STATEMENT).record.fiscal_period == PERIOD
+
+
+def test_overview_latest_quarter_from_facts_can_be_reused():
+    calls = []
+    overview = _cached_overview(
+        fetched_at=RECENT_AT,
+        fiscal_period=None,
+        facts=(("latest_quarter", "2026-06-30"),),
+    )
+    service = RefreshFundamentalsService(provider=_provider(_statement_payloads(), calls), now=lambda: AS_OF)
+    result = service.refresh(_security(), (overview,), AS_OF)
+
+    assert calls == ["INCOME_STATEMENT", "BALANCE_SHEET", "CASH_FLOW", "EARNINGS"]
+    assert result.status_for(ProviderEndpoint.OVERVIEW).reuse_status is ReuseStatus.REUSED_CURRENT
+    assert result.status_for(ProviderEndpoint.OVERVIEW).record is overview
 
 
 def test_provider_error_fails_refresh_without_fabricating_statements():

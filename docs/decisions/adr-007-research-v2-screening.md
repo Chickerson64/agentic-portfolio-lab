@@ -73,6 +73,32 @@ Legacy BALANCE_SHEET records without `cash_field` are CCE-era cash. The mapper
 still uses `period_0_cash` and does not invent short-term investments. Do not
 rewrite immutable historical artifacts.
 
+## OVERVIEW reuse: initial hydration vs weekly refresh
+
+Research v2 refresh keeps OVERVIEW rows append-only: only `FETCHED_THIS_CYCLE`
+records are persisted. `REUSED_CURRENT` and `STALE` OVERVIEW coverage reuse the
+original record object (timestamps, facts, and `record_id` unchanged).
+
+**INITIAL HYDRATION.** When an identity has no complete statement set (all four
+of `INCOME_STATEMENT`, `BALANCE_SHEET`, `CASH_FLOW`, and `EARNINGS` for the
+exact `SecurityIdentity`), a persisted Alpha Vantage OVERVIEW may be
+`REUSED_CURRENT` if it matches that identity, has a parseable LatestQuarter
+(`fiscal_period` or `facts["latest_quarter"]`), and is fresh enough versus
+cycle `as_of`. Freshness is application policy of `RefreshFundamentalsService`:
+`OVERVIEW_REUSE_MAX_AGE = 7 days` from `as_of` (not wall-clock now).
+`fetched_at` and `as_of` must be timezone-aware, `fetched_at <= as_of`, and
+`(as_of - fetched_at) <= OVERVIEW_REUSE_MAX_AGE`. After the four statements are
+fetched, if the newest statement `fiscal_period` is newer than LatestQuarter,
+OVERVIEW coverage becomes `STALE`; original timestamps and facts stay, and the
+packet still assembles. Do not fetch OVERVIEW just to “fix” STALE during
+hydration.
+
+**NORMAL WEEKLY REFRESH.** When a complete statement set already exists, a live
+OVERVIEW is always the reporting-period probe (`FETCHED_THIS_CYCLE`, new
+`fetched_at`). Statement reuse is unchanged: reuse cached statements only when
+all four `fiscal_period` values equal that LatestQuarter; otherwise fetch all
+four.
+
 ## Consequences
 
 - Old `ResearchPacket` and `PersistedRunState` documents remain reopenable.

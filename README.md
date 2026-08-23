@@ -15,8 +15,8 @@ The current local weekly paper-trading loop includes:
 - mechanical SPY benchmark fulfillment from a persisted provider-attributed quote;
 - Alpha Vantage Research v2: a versioned managed universe (the operator-approved
   30-name `VALUE_US_EQUITIES_V1` snapshot), a cheap OVERVIEW screen, five
-  deep research slots, statement reuse, and derived metrics computed in
-  application code;
+  deep research slots, statement reuse, initial-hydration OVERVIEW reuse,
+  and derived metrics computed in application code;
 - an explicit OVERVIEW bootstrap command that fills missing overview rows at
   most 25 Alpha Vantage requests per invocation;
 - an OpenAI Value Manager adapter that consumes that research and produces one
@@ -126,7 +126,7 @@ The intended live workflow is:
 3. refresh prices
 4. fulfill the SPY benchmark when an eligible quote exists
 5. build research (screens the versioned universe and deep-refreshes selected
-   names, reusing current statements)
+   names, reusing a recent cached OVERVIEW on initial hydration and current statements)
 6. run the Value Manager
 7. inspect deterministic validation
 8. human approve or reject

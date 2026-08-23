@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Callable, Protocol, Sequence
 
 from agentic_portfolio_lab.domain.portfolio import SecurityIdentity
@@ -18,6 +18,7 @@ from agentic_portfolio_lab.domain.research_provider import (
 )
 
 _PROVIDER_IDENTITY = "alpha-vantage"
+OVERVIEW_REUSE_MAX_AGE = timedelta(days=7)
 _MISSING_FACT_VALUES = frozenset({"n/a", "na", "none"})
 _STATEMENT_ENDPOINTS = (
     ProviderEndpoint.INCOME_STATEMENT,
@@ -91,7 +92,7 @@ class RefreshFundamentalsResult:
 
 
 class RefreshFundamentalsService:
-    """Always fetch OVERVIEW; reuse statement rows when LatestQuarter still matches."""
+    """Refresh fundamentals with initial-hydration OVERVIEW reuse and weekly statement reuse."""
 
     def __init__(
         self,
@@ -108,9 +109,51 @@ class RefreshFundamentalsService:
         cached: Sequence[ProviderFundamentalRecord],
         as_of: datetime,
     ) -> RefreshFundamentalsResult:
+        if not isinstance(as_of, datetime):
+            raise TypeError("as_of must be a datetime")
+        if as_of.tzinfo is None or as_of.utcoffset() is None:
+            raise ValueError("as_of must be timezone-aware")
         fetched_at = self._now()
         if fetched_at.tzinfo is None or fetched_at.utcoffset() is None:
             raise ValueError("fundamentals clock must return a timezone-aware datetime")
+        if not _has_complete_statement_set(security, cached):
+            reused_overview = _reusable_overview(security, cached, as_of)
+            if reused_overview is not None:
+                return self._hydrate_from_cached_overview(security, reused_overview, as_of, fetched_at)
+        return self._refresh_with_live_overview(security, cached, as_of, fetched_at)
+
+    def _hydrate_from_cached_overview(
+        self,
+        security: SecurityIdentity,
+        overview_record: ProviderFundamentalRecord,
+        as_of: datetime,
+        fetched_at: datetime,
+    ) -> RefreshFundamentalsResult:
+        latest_quarter = _overview_latest_quarter(overview_record)
+        if latest_quarter is None:
+            raise ResearchProviderError("OVERVIEW LatestQuarter cannot be parsed")
+        statement_statuses = _fetch_statement_statuses(self._provider, security, as_of, fetched_at)
+        overview_status = EndpointRefreshStatus(
+            ProviderEndpoint.OVERVIEW,
+            ReuseStatus.REUSED_CURRENT,
+            overview_record,
+        )
+        newest_statement_period = _newest_statement_period(statement_statuses)
+        if newest_statement_period is not None and newest_statement_period > latest_quarter:
+            overview_status = EndpointRefreshStatus(
+                ProviderEndpoint.OVERVIEW,
+                ReuseStatus.STALE,
+                overview_record,
+            )
+        return RefreshFundamentalsResult(security, (overview_status, *statement_statuses))
+
+    def _refresh_with_live_overview(
+        self,
+        security: SecurityIdentity,
+        cached: Sequence[ProviderFundamentalRecord],
+        as_of: datetime,
+        fetched_at: datetime,
+    ) -> RefreshFundamentalsResult:
         overview = self._provider.fetch_overview(security, as_of=as_of)
         latest_quarter = _require_latest_quarter(overview)
         overview_record = provider_fundamental_record_from_normalized(
@@ -129,20 +172,7 @@ class RefreshFundamentalsService:
                 for endpoint in _STATEMENT_ENDPOINTS
             )
             return RefreshFundamentalsResult(security, tuple(statuses))
-        fetched_statements = (
-            (ProviderEndpoint.INCOME_STATEMENT, self._provider.fetch_income_statement(security, as_of=as_of)),
-            (ProviderEndpoint.BALANCE_SHEET, self._provider.fetch_balance_sheet(security, as_of=as_of)),
-            (ProviderEndpoint.CASH_FLOW, self._provider.fetch_cash_flow(security, as_of=as_of)),
-            (ProviderEndpoint.EARNINGS, self._provider.fetch_earnings(security, as_of=as_of)),
-        )
-        for endpoint, document in fetched_statements:
-            statuses.append(
-                EndpointRefreshStatus(
-                    endpoint,
-                    ReuseStatus.FETCHED_THIS_CYCLE,
-                    provider_fundamental_record_from_normalized(security, endpoint, document, fetched_at),
-                )
-            )
+        statuses.extend(_fetch_statement_statuses(self._provider, security, as_of, fetched_at))
         return RefreshFundamentalsResult(security, tuple(statuses))
 
 
@@ -176,6 +206,80 @@ def _require_latest_quarter(overview: NormalizedOverviewFacts) -> date:
         return date.fromisoformat(overview.latest_quarter)
     except ValueError as error:
         raise ResearchProviderError("OVERVIEW LatestQuarter cannot be parsed") from error
+
+
+def _has_complete_statement_set(
+    security: SecurityIdentity,
+    cached: Sequence[ProviderFundamentalRecord],
+) -> bool:
+    present = {
+        record.endpoint
+        for record in cached
+        if record.security == security and record.endpoint in _STATEMENT_ENDPOINTS
+    }
+    return all(endpoint in present for endpoint in _STATEMENT_ENDPOINTS)
+
+
+def _overview_latest_quarter(record: ProviderFundamentalRecord) -> date | None:
+    if record.fiscal_period is not None:
+        return record.fiscal_period
+    return _parse_date(dict(record.facts).get("latest_quarter"))
+
+
+def _overview_fresh_enough(fetched_at: datetime, as_of: datetime) -> bool:
+    if fetched_at.tzinfo is None or fetched_at.utcoffset() is None:
+        return False
+    if as_of.tzinfo is None or as_of.utcoffset() is None:
+        return False
+    if fetched_at > as_of:
+        return False
+    return (as_of - fetched_at) <= OVERVIEW_REUSE_MAX_AGE
+
+
+def _reusable_overview(
+    security: SecurityIdentity,
+    cached: Sequence[ProviderFundamentalRecord],
+    as_of: datetime,
+) -> ProviderFundamentalRecord | None:
+    matches = [
+        record
+        for record in cached
+        if record.security == security
+        and record.endpoint is ProviderEndpoint.OVERVIEW
+        and record.provider_identity == _PROVIDER_IDENTITY
+        and _overview_latest_quarter(record) is not None
+        and _overview_fresh_enough(record.fetched_at, as_of)
+    ]
+    if not matches:
+        return None
+    return max(matches, key=lambda record: record.fetched_at)
+
+
+def _newest_statement_period(statuses: Sequence[EndpointRefreshStatus]) -> date | None:
+    periods = tuple(status.record.fiscal_period for status in statuses if status.record.fiscal_period is not None)
+    return max(periods) if periods else None
+
+
+def _fetch_statement_statuses(
+    provider: FundamentalEndpointProvider,
+    security: SecurityIdentity,
+    as_of: datetime,
+    fetched_at: datetime,
+) -> tuple[EndpointRefreshStatus, ...]:
+    fetched_statements = (
+        (ProviderEndpoint.INCOME_STATEMENT, provider.fetch_income_statement(security, as_of=as_of)),
+        (ProviderEndpoint.BALANCE_SHEET, provider.fetch_balance_sheet(security, as_of=as_of)),
+        (ProviderEndpoint.CASH_FLOW, provider.fetch_cash_flow(security, as_of=as_of)),
+        (ProviderEndpoint.EARNINGS, provider.fetch_earnings(security, as_of=as_of)),
+    )
+    return tuple(
+        EndpointRefreshStatus(
+            endpoint,
+            ReuseStatus.FETCHED_THIS_CYCLE,
+            provider_fundamental_record_from_normalized(security, endpoint, document, fetched_at),
+        )
+        for endpoint, document in fetched_statements
+    )
 
 
 def _reusable_statements(

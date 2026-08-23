@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
@@ -19,6 +19,7 @@ from agentic_portfolio_lab.application.market_configuration import VALUE_US_EQUI
 from agentic_portfolio_lab.domain.openai_value_manager import _serialize_context, _serialize_packet
 from agentic_portfolio_lab.domain.portfolio import CashBalance, Portfolio
 from agentic_portfolio_lab.domain.provider_fundamentals import (
+    FreshnessClass,
     ProviderEndpoint,
     ProviderFundamentalRecord,
     ReuseStatus,
@@ -35,6 +36,7 @@ from agentic_portfolio_lab.infrastructure.sqlite_local_state import SQLiteLocalR
 UTC = timezone.utc
 AS_OF = datetime(2026, 8, 17, 16, tzinfo=UTC)
 CACHED_AT = datetime(2026, 7, 1, 12, tzinfo=UTC)
+RECENT_AT = AS_OF - timedelta(days=2)
 PERIOD = date(2026, 6, 30)
 LATER = datetime(2026, 10, 21, tzinfo=UTC)
 
@@ -123,17 +125,19 @@ def _cached_overview(
     fetched_at=CACHED_AT,
     fifty_two_week_high="200",
     pe_ratio="20",
+    fiscal_period=PERIOD,
+    latest_quarter="2026-06-30",
 ) -> ProviderFundamentalRecord:
     return ProviderFundamentalRecord(
         record_id=record_id or f"cached-{security.ticker}-OVERVIEW",
         security=security,
         provider_identity="alpha-vantage",
         endpoint=ProviderEndpoint.OVERVIEW,
-        fiscal_period=PERIOD,
+        fiscal_period=fiscal_period,
         source_date=PERIOD,
         fetched_at=fetched_at,
         facts=(
-            ("latest_quarter", "2026-06-30"),
+            ("latest_quarter", latest_quarter),
             ("fifty_two_week_high", fifty_two_week_high),
             ("pe_ratio", pe_ratio),
             ("company_name", security.ticker),
@@ -372,6 +376,110 @@ def test_reuse_matching_latest_quarter_fetches_overview_only():
     assert coverage[ProviderEndpoint.INCOME_STATEMENT].fetched_at == CACHED_AT
 
 
+def test_initial_hydration_reuses_recent_overview_and_does_not_repersist_it():
+    security = VALUE_US_EQUITIES_V1.identities[0]
+    overview = _cached_overview(security, fetched_at=RECENT_AT)
+    state = FakeCycleState(
+        price_observations=(_price(security),),
+        fundamental_records=(overview,),
+    )
+    calls: list[tuple[str, str]] = []
+    result = _service(state, calls).build(portfolio_id=uuid4())
+
+    assert [function for function, _ in calls] == [
+        "INCOME_STATEMENT",
+        "BALANCE_SHEET",
+        "CASH_FLOW",
+        "EARNINGS",
+    ]
+    fetched = state.fetched_records[0]
+    assert all(record.endpoint is not ProviderEndpoint.OVERVIEW for record in fetched)
+    assert overview.record_id not in {record.record_id for record in fetched}
+    assert overview.fetched_at == RECENT_AT
+    assert overview.source_date == PERIOD
+    coverage = {item.endpoint: item for item in result.batch.packets[0].fundamentals.coverage}
+    assert coverage[ProviderEndpoint.OVERVIEW].reuse_status is ReuseStatus.REUSED_CURRENT
+    assert coverage[ProviderEndpoint.OVERVIEW].fetched_at == RECENT_AT
+    assert coverage[ProviderEndpoint.OVERVIEW].source_date == PERIOD
+    assert all(
+        coverage[endpoint].reuse_status is ReuseStatus.FETCHED_THIS_CYCLE
+        for endpoint in (
+            ProviderEndpoint.INCOME_STATEMENT,
+            ProviderEndpoint.BALANCE_SHEET,
+            ProviderEndpoint.CASH_FLOW,
+            ProviderEndpoint.EARNINGS,
+        )
+    )
+
+
+def test_five_name_initial_hydration_makes_twenty_statement_calls_and_no_overview_calls():
+    universe = VALUE_US_EQUITIES_V1.identities
+    state = FakeCycleState(
+        price_observations=tuple(_price(security) for security in universe),
+        fundamental_records=tuple(_cached_overview(security, fetched_at=RECENT_AT) for security in universe),
+    )
+    calls: list[tuple[str, str]] = []
+    _service(state, calls).build(portfolio_id=uuid4())
+
+    selected = state.screening_runs[0].selected
+    assert len(selected) == 5
+    assert len(calls) == 20
+    assert {function for function, _ in calls} == {
+        "INCOME_STATEMENT",
+        "BALANCE_SHEET",
+        "CASH_FLOW",
+        "EARNINGS",
+    }
+    assert all(
+        sum(function == endpoint for function, _ in calls) == 5
+        for endpoint in ("INCOME_STATEMENT", "BALANCE_SHEET", "CASH_FLOW", "EARNINGS")
+    )
+    assert {symbol for _, symbol in calls} == {security.ticker for security in selected}
+
+
+def test_hydration_marks_overview_stale_when_statements_are_newer_and_packet_assembles():
+    security = VALUE_US_EQUITIES_V1.identities[0]
+    overview = _cached_overview(
+        security,
+        fetched_at=RECENT_AT,
+        fiscal_period=date(2026, 3, 31),
+        latest_quarter="2026-03-31",
+    )
+    state = FakeCycleState(
+        price_observations=(_price(security),),
+        fundamental_records=(overview,),
+    )
+    calls: list[tuple[str, str]] = []
+    result = _service(state, calls).build(portfolio_id=uuid4())
+
+    assert "OVERVIEW" not in {function for function, _ in calls}
+    packet = result.batch.packets[0]
+    assert packet.fundamentals is not None
+    coverage = {item.endpoint: item for item in packet.fundamentals.coverage}
+    assert coverage[ProviderEndpoint.OVERVIEW].reuse_status is ReuseStatus.STALE
+    assert coverage[ProviderEndpoint.OVERVIEW].freshness is FreshnessClass.STALE
+    assert coverage[ProviderEndpoint.OVERVIEW].fetched_at == RECENT_AT
+    assert coverage[ProviderEndpoint.OVERVIEW].source_date == PERIOD
+    assert overview.fetched_at == RECENT_AT
+    assert overview.facts == (
+        ("latest_quarter", "2026-03-31"),
+        ("fifty_two_week_high", "200"),
+        ("pe_ratio", "20"),
+        ("company_name", security.ticker),
+    )
+    assert all(
+        coverage[endpoint].reuse_status is ReuseStatus.FETCHED_THIS_CYCLE
+        for endpoint in (
+            ProviderEndpoint.INCOME_STATEMENT,
+            ProviderEndpoint.BALANCE_SHEET,
+            ProviderEndpoint.CASH_FLOW,
+            ProviderEndpoint.EARNINGS,
+        )
+    )
+    fetched = state.fetched_records[0]
+    assert all(record.endpoint is not ProviderEndpoint.OVERVIEW for record in fetched)
+
+
 def test_period_change_fetches_overview_and_all_four_statements():
     security = VALUE_US_EQUITIES_V1.identities[0]
     cached_statements = _cached_statements(security)
@@ -567,6 +675,46 @@ def test_sqlite_reopen_preserves_screening_run_id_and_reused_timestamps(tmp_path
         assert reused[original.record_id].source_date == PERIOD
 
 
+def test_sqlite_reopen_preserves_reused_overview_and_appends_statements_only(tmp_path):
+    path = tmp_path / "research.sqlite"
+    store = SQLiteLocalRunStore(path)
+    initial = store.initialize_run(initialized_at=datetime(2026, 8, 13, 14, tzinfo=UTC))
+    security = VALUE_US_EQUITIES_V1.identities[0]
+    overview = _cached_overview(security, fetched_at=RECENT_AT)
+    store.save_transition(
+        replace(
+            initial,
+            price_observations=(_price(security),),
+            fundamental_records=(overview,),
+        )
+    )
+    calls: list[tuple[str, str]] = []
+    BuildResearchService(
+        provider=_recording_provider(calls),
+        state=SQLiteResearchBatchState(store),
+        universe=VALUE_US_EQUITIES_V1,
+        now=lambda: AS_OF,
+    ).build(portfolio_id=initial.managed_portfolio.portfolio_id)
+
+    reopened = SQLiteLocalRunStore(path).open_run()
+    assert reopened is not None
+    overviews = tuple(record for record in reopened.fundamental_records if record.endpoint is ProviderEndpoint.OVERVIEW)
+    assert len(overviews) == 1
+    assert overviews[0].record_id == overview.record_id
+    assert overviews[0].fetched_at == RECENT_AT
+    assert overviews[0].source_date == PERIOD
+    assert overviews[0].facts == overview.facts
+    statements = tuple(record for record in reopened.fundamental_records if record.endpoint is not ProviderEndpoint.OVERVIEW)
+    assert {record.endpoint for record in statements} == {
+        ProviderEndpoint.INCOME_STATEMENT,
+        ProviderEndpoint.BALANCE_SHEET,
+        ProviderEndpoint.CASH_FLOW,
+        ProviderEndpoint.EARNINGS,
+    }
+    assert all(record.fetched_at == AS_OF for record in statements)
+    assert "OVERVIEW" not in {function for function, _ in calls}
+
+
 def test_build_research_command_returns_batch_metadata_without_live_provider_call():
     state = _priced(*VALUE_US_EQUITIES_V1.identities[:5])
     service = _service(state, [])
@@ -620,6 +768,53 @@ def test_provider_failure_after_screen_does_not_persist(tmp_path):
     assert reopened.research_batches == ()
     assert reopened.screening_runs == ()
     assert all(record.record_id.startswith("cached-") for record in reopened.fundamental_records)
+
+
+def test_recent_overview_income_failure_on_second_name_does_not_persist(tmp_path):
+    path = tmp_path / "research.sqlite"
+    store = SQLiteLocalRunStore(path)
+    initial = store.initialize_run(initialized_at=datetime(2026, 8, 13, 14, tzinfo=UTC))
+    priced = VALUE_US_EQUITIES_V1.identities[:2]
+    store.save_transition(
+        replace(
+            initial,
+            price_observations=tuple(_price(security) for security in priced),
+            fundamental_records=tuple(_cached_overview(security, fetched_at=RECENT_AT) for security in priced),
+        )
+    )
+    calls: list[tuple[str, str]] = []
+
+    def transport(url: str):
+        query = parse_qs(urlparse(url).query)
+        function, symbol = query["function"][0], query["symbol"][0]
+        calls.append((function, symbol))
+        if len({item[1] for item in calls}) > 1 and function == "INCOME_STATEMENT":
+            raise ResearchProviderError("second selected name income failed")
+        security = next(item for item in VALUE_US_EQUITIES_V1.identities if item.ticker == symbol)
+        payloads = {
+            "OVERVIEW": _overview_payload(security),
+            "INCOME_STATEMENT": _income_payload(security),
+            "BALANCE_SHEET": _balance_payload(security),
+            "CASH_FLOW": _cash_flow_payload(security),
+            "EARNINGS": _earnings_payload(security),
+        }
+        return payloads[function]
+
+    with pytest.raises(ResearchProviderError, match="second selected name income failed"):
+        BuildResearchService(
+            provider=AlphaVantageResearchProvider(api_key="key", transport=transport, sleep=lambda _: None),
+            state=SQLiteResearchBatchState(store),
+            universe=VALUE_US_EQUITIES_V1,
+            now=lambda: AS_OF,
+        ).build(portfolio_id=initial.managed_portfolio.portfolio_id)
+
+    reopened = SQLiteLocalRunStore(path).open_run()
+    assert reopened is not None
+    assert reopened.research_batches == ()
+    assert reopened.screening_runs == ()
+    assert all(record.record_id.startswith("cached-") for record in reopened.fundamental_records)
+    assert all(record.endpoint is ProviderEndpoint.OVERVIEW for record in reopened.fundamental_records)
+    assert "OVERVIEW" not in {function for function, _ in calls}
 
 
 def test_assembled_batch_uses_injected_cycle_price_not_frontend_numbers():
