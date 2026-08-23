@@ -193,6 +193,7 @@ class SQLiteLocalRunStore:
             key=lambda execution: execution.executed_trade.executed_trade_id,
             label="executions",
         )
+        SQLiteLocalRunStore._require_immutable_records(getattr(current, "execution_checks", ()), getattr(proposed, "execution_checks", ()), key=lambda check: check.check_id, label="execution safety checks")
         SQLiteLocalRunStore._require_history_execution_linkage(current.history_entries, proposed.history_entries)
         SQLiteLocalRunStore._require_immutable_records(
             getattr(current, "benchmark_fulfillments", ()),

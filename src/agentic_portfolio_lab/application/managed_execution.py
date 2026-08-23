@@ -6,9 +6,13 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from uuid import UUID
 
+from agentic_portfolio_lab.application.active_policy import load_active_value_policy
 from agentic_portfolio_lab.application.local_state import PersistedRunState
 from agentic_portfolio_lab.dashboard import DecisionHistoryArtifacts
 from agentic_portfolio_lab.domain.approval import ApprovalDecision
+from agentic_portfolio_lab.domain.execution_check import ExecutionSafetyCheck
+from agentic_portfolio_lab.domain.policy import CurrentPolicyReference
+from agentic_portfolio_lab.domain.risk_validation import TwoLayerRiskEvaluator
 from agentic_portfolio_lab.domain.recommendations import RecommendationAction
 from agentic_portfolio_lab.domain.simulated_execution import SimulatedExecutionResult, SimulatedExecutionWorkflow
 from agentic_portfolio_lab.domain.valuation import PortfolioValuation, PriceObservation
@@ -53,24 +57,89 @@ class ManagedPaperExecutionService:
         if any(item.decision_cycle_id == decision_cycle_id for item in state.executions):
             raise ManagedPaperExecutionError("decision cycle has already been executed")
         observation = self._latest_observation(state, validation.validated_trade.security, approval.decided_at, executed_at)
+        check = None
+        if isinstance(journal.policy_reference, CurrentPolicyReference):
+            active_policy = load_active_value_policy()
+            policy_lineage_matches = not (
+                journal.policy_reference.investment_constitution != active_policy.investment_constitution
+                or journal.policy_reference.manager_risk_constitution != active_policy.manager_risk_constitution
+            )
+            current_decision = replace(
+                journal.decision_result,
+                context=replace(
+                    journal.decision_result.context,
+                    portfolio=state.managed_portfolio,
+                ),
+            )
+            safety = TwoLayerRiskEvaluator().evaluate(
+                current_decision,
+                validation_timestamp=executed_at,
+                price_observation=observation,
+                system_safety_envelope=active_policy.system_safety_envelope,
+            ).safety_validation
+            check = ExecutionSafetyCheck(
+                approval,
+                active_policy,
+                safety,
+                executed_at,
+                observation,
+                policy_lineage_matches=policy_lineage_matches,
+                policy_lineage_failure_reason=(
+                    None
+                    if policy_lineage_matches
+                    else "Journaled investment and manager policy lineage does not match the active policy."
+                ),
+            )
+            if not check.passed:
+                self._persist_check(state, check)
+                raise ManagedPaperExecutionError("execution-time System Safety revalidation failed")
         try:
             execution = SimulatedExecutionWorkflow.execute(approval, state.managed_portfolio, observation, executed_at=executed_at)
-        except (TypeError, ValueError) as error:
+            if check is not None:
+                execution = replace(
+                    execution,
+                    executed_trade=replace(
+                        execution.executed_trade,
+                        execution_check_id=check.check_id,
+                    ),
+                )
+            managed_valuation = self._valuation(
+                state,
+                execution.updated_portfolio,
+                observation,
+                executed_at,
+            )
+            history_entries = self._history_with_execution(state, journal, approval, execution)
+            proposed = replace(
+                state,
+                managed_portfolio=execution.updated_portfolio,
+                managed_history=state.managed_history.append(execution.updated_portfolio, managed_valuation),
+                executions=(*state.executions, execution),
+                execution_checks=(
+                    *getattr(state, "execution_checks", ()),
+                    *((check,) if check is not None else ()),
+                ),
+                history_entries=history_entries,
+            )
+        except (ManagedPaperExecutionError, TypeError, ValueError) as error:
+            if check is not None:
+                self._persist_check(state, check)
+            if isinstance(error, ManagedPaperExecutionError):
+                raise
             raise ManagedPaperExecutionError(str(error)) from error
-        managed_valuation = self._valuation(state, execution.updated_portfolio, observation, executed_at)
-        history_entries = self._history_with_execution(state, journal, approval, execution)
-        proposed = replace(
-            state,
-            managed_portfolio=execution.updated_portfolio,
-            managed_history=state.managed_history.append(execution.updated_portfolio, managed_valuation),
-            executions=(*state.executions, execution),
-            history_entries=history_entries,
-        )
         self._store.save_transition(proposed)
         # The reviewed benchmark lane owns benchmark valuations and fulfillment.
         # Without a new authoritative benchmark valuation, appending managed-only
         # history cannot form a truthful synchronized PerformanceComparison.
         return ManagedPaperExecutionResult(execution, comparison_refreshed=False)
+
+    def _persist_check(self, state: PersistedRunState, check: ExecutionSafetyCheck) -> None:
+        self._store.save_transition(
+            replace(
+                state,
+                execution_checks=(*getattr(state, "execution_checks", ()), check),
+            )
+        )
 
     def _require_state(self) -> PersistedRunState:
         state = self._store.open_run()

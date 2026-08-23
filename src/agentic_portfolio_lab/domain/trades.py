@@ -215,6 +215,7 @@ class ExecutedTrade:
     price_convention: str
     executed_at: datetime
     execution_source: str = SIMULATED_EXECUTION_SOURCE
+    execution_check_id: UUID | None = None
     executed_trade_id: UUID = field(default_factory=uuid4)
 
     def __post_init__(self) -> None:
@@ -234,6 +235,8 @@ class ExecutedTrade:
         executed_at = _require_aware_datetime(self.executed_at, field_name="executed_at")
         if executed_at < self.validated_trade.validation_timestamp:
             raise ValueError("executed_at must not precede validation_timestamp")
+        if self.execution_check_id is not None and not isinstance(self.execution_check_id, UUID):
+            raise TypeError("execution_check_id must be a UUID or None")
         object.__setattr__(
             self,
             "execution_source",

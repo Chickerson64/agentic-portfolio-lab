@@ -20,6 +20,8 @@ from agentic_portfolio_lab.domain.simulated_execution import SimulatedExecutionR
 from agentic_portfolio_lab.domain.valuation import BenchmarkPortfolio, PriceObservation
 from agentic_portfolio_lab.domain.portfolio import Portfolio
 from agentic_portfolio_lab.domain.portfolio_service import PortfolioService
+from agentic_portfolio_lab.domain.execution_check import ExecutionSafetyCheck
+from agentic_portfolio_lab.domain.policy import CurrentPolicyReference
 from decimal import Decimal
 
 
@@ -53,6 +55,7 @@ class PersistedRunState:
     journal_entries: tuple[DecisionJournalEntry, ...] = ()
     approvals: tuple[DecisionApproval, ...] = ()
     executions: tuple[SimulatedExecutionResult, ...] = ()
+    execution_checks: tuple[ExecutionSafetyCheck, ...] = ()
     history_entries: tuple[DecisionHistoryArtifacts, ...] = ()
     benchmark_fulfillments: tuple[PassiveIndexFulfillment, ...] = ()
     screening_runs: tuple[ScreeningRun, ...] = ()
@@ -70,7 +73,7 @@ class PersistedRunState:
             raise TypeError("managed_history must be a PortfolioPerformanceHistory")
         if not isinstance(self.benchmark_history, BenchmarkPerformanceHistory):
             raise TypeError("benchmark_history must be a BenchmarkPerformanceHistory")
-        for name in ("funding_results", "price_observations", "research_batches", "journal_entries", "approvals", "executions", "history_entries", "benchmark_fulfillments", "screening_runs", "fundamental_records"):
+        for name in ("funding_results", "price_observations", "research_batches", "journal_entries", "approvals", "executions", "execution_checks", "history_entries", "benchmark_fulfillments", "screening_runs", "fundamental_records"):
             value = getattr(self, name, ())
             if not isinstance(value, tuple):
                 raise TypeError(f"{name} must be a tuple")
@@ -211,6 +214,15 @@ class PersistedRunState:
             if journal is None or approval.journal_entry is not journal:
                 raise ValueError("approval must reference an exact canonical persisted journal")
         executions = {execution.decision_cycle_id: execution for execution in self.executions}
+        checks = {check.check_id: check for check in self.execution_checks}
+        if len(checks) != len(self.execution_checks):
+            raise ValueError("execution_checks must not contain duplicate identities")
+        if not all(
+            check.approval.decision_cycle_id in approvals
+            and check.approval is approvals[check.approval.decision_cycle_id]
+            for check in self.execution_checks
+        ):
+            raise ValueError("execution checks must reference canonical approvals")
         if len(executions) != len(self.executions):
             raise ValueError("executions must not contain duplicate decision cycles")
         execution_ids = {execution.executed_trade.executed_trade_id for execution in self.executions}
@@ -225,6 +237,22 @@ class PersistedRunState:
                 raise ValueError("execution portfolio lineage must match its journal")
             if execution.executed_trade.validated_trade is not journal.risk_validation_result.validated_trade:
                 raise ValueError("execution must use the journal's exact authoritative validated trade")
+            if isinstance(journal.policy_reference, CurrentPolicyReference):
+                check_id = execution.executed_trade.execution_check_id
+                check = next((item for item in self.execution_checks if item.check_id == check_id), None)
+                if check is None or not check.passed or check.decision_cycle_id != cycle_id:
+                    raise ValueError("current-policy execution must link its passed execution safety check")
+                if check.execution_observation != execution.execution_observation:
+                    raise ValueError("execution check observation must match execution observation")
+                if check.checked_at != execution.executed_trade.executed_at:
+                    raise ValueError("execution check must be performed at execution time")
+                if check.safety_validation.decision_result.context.portfolio != execution.original_portfolio:
+                    raise ValueError("execution check portfolio must match execution original portfolio")
+                if check.safety_validation.target_purchase != execution.execution_target_purchase:
+                    raise ValueError("execution check target calculation must match execution target calculation")
+                checked_trade = check.safety_validation.validated_trade
+                if checked_trade is None or checked_trade.security != execution.executed_trade.security:
+                    raise ValueError("execution check security must match executed trade security")
         history_by_cycle = {entry.journal_entry.decision_cycle_id: entry for entry in self.history_entries}
         if len(history_by_cycle) != len(self.history_entries):
             raise ValueError("history_entries must not contain duplicate decision cycles")

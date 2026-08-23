@@ -34,10 +34,10 @@ def _types() -> dict[str, type[object]]:
     # Imports are intentionally explicit: only known local domain/application
     # artifacts may be rehydrated from a durable database document.
     from agentic_portfolio_lab.dashboard import DecisionHistoryArtifacts
-    from agentic_portfolio_lab.domain import approval, benchmark_fulfillment, cash_events, constitution, journal, performance, policy, portfolio, provider_fundamentals, recommendations, research, research_provider, reviewer, risk_validation, screening, simulated_execution, trades, universe, valuation, value_manager, value_manager_workflow
+    from agentic_portfolio_lab.domain import approval, benchmark_fulfillment, cash_events, constitution, execution_check, journal, performance, policy, portfolio, provider_fundamentals, recommendations, research, research_provider, reviewer, risk_validation, screening, simulated_execution, trades, universe, valuation, value_manager, value_manager_workflow
 
     modules = (
-        approval, benchmark_fulfillment, cash_events, constitution, journal, performance, policy, portfolio,
+        approval, benchmark_fulfillment, cash_events, constitution, execution_check, journal, performance, policy, portfolio,
         provider_fundamentals, recommendations, research, research_provider, reviewer, risk_validation,
         screening, simulated_execution, trades, universe, valuation, value_manager, value_manager_workflow,
     )
@@ -229,8 +229,39 @@ def decode_run_state(value: Any) -> PersistedRunState:
         for approval in state.approvals
     )
     approvals_by_cycle = {approval.decision_cycle_id: approval for approval in approvals}
+    from agentic_portfolio_lab.domain.execution_check import ExecutionSafetyCheck
+    observations_by_identity = {(item.security, item.observed_at): item for item in state.price_observations}
+    execution_checks = tuple(
+        ExecutionSafetyCheck(
+            approval=approvals_by_cycle[check.decision_cycle_id],
+            policy_reference=check.policy_reference,
+            safety_validation=replace(
+                check.safety_validation,
+                price_observation=(
+                    None
+                    if check.safety_validation.price_observation is None
+                    else observations_by_identity[
+                        (
+                            check.safety_validation.price_observation.security,
+                            check.safety_validation.price_observation.observed_at,
+                        )
+                    ]
+                ),
+            ),
+            checked_at=check.checked_at,
+            execution_observation=None if check.execution_observation is None else observations_by_identity[(check.execution_observation.security, check.execution_observation.observed_at)],
+            policy_lineage_matches=getattr(check, "policy_lineage_matches", True),
+            policy_lineage_failure_reason=getattr(check, "policy_lineage_failure_reason", None),
+            check_id=check.check_id,
+        ) for check in getattr(state, "execution_checks", ())
+    )
     executions = tuple(
-        _canonical_execution(execution, journals=journals, approvals=approvals_by_cycle)
+        _canonical_execution(
+            execution,
+            journals=journals,
+            approvals=approvals_by_cycle,
+            observations=observations_by_identity,
+        )
         for execution in state.executions
     )
     executions_by_cycle = {execution.decision_cycle_id: execution for execution in executions}
@@ -239,7 +270,6 @@ def decode_run_state(value: Any) -> PersistedRunState:
         for entry in state.history_entries
     )
     observations = tuple(state.price_observations)
-    observations_by_identity = {(item.security, item.observed_at): item for item in observations}
     from agentic_portfolio_lab.domain.performance import BenchmarkPerformanceHistory, PerformanceSnapshot, PortfolioPerformanceHistory
     funding_by_id = {item.cash_event.event_id: item.cash_event for item in state.funding_results}
 
@@ -285,6 +315,7 @@ def decode_run_state(value: Any) -> PersistedRunState:
         journal_entries=tuple(canonical_journals),
         approvals=approvals,
         executions=executions,
+        execution_checks=execution_checks,
         history_entries=history_entries,
         benchmark_fulfillments=canonical_fulfillments,
         screening_runs=getattr(state, "screening_runs", ()),
@@ -293,7 +324,7 @@ def decode_run_state(value: Any) -> PersistedRunState:
     )
 
 
-def _canonical_execution(execution, *, journals, approvals):
+def _canonical_execution(execution, *, journals, approvals, observations):
     from agentic_portfolio_lab.domain.simulated_execution import SimulatedExecutionResult
     from agentic_portfolio_lab.domain.trades import ExecutedTrade
 
@@ -306,6 +337,9 @@ def _canonical_execution(execution, *, journals, approvals):
     if authoritative_trade is None:
         raise ValueError("persisted execution journal is missing its authoritative validated trade")
     raw_trade = execution.executed_trade
+    execution_observation = observations[
+        (execution.execution_observation.security, execution.execution_observation.observed_at)
+    ]
     canonical_trade = ExecutedTrade(
         validated_trade=authoritative_trade,
         executed_quantity=raw_trade.executed_quantity,
@@ -316,12 +350,13 @@ def _canonical_execution(execution, *, journals, approvals):
         price_convention=raw_trade.price_convention,
         executed_at=raw_trade.executed_at,
         execution_source=raw_trade.execution_source,
+        execution_check_id=raw_trade.execution_check_id,
         executed_trade_id=raw_trade.executed_trade_id,
     )
     return SimulatedExecutionResult(
         approval=approval,
         original_portfolio=execution.original_portfolio,
-        execution_observation=execution.execution_observation,
+        execution_observation=execution_observation,
         execution_target_purchase=execution.execution_target_purchase,
         executed_trade=canonical_trade,
         updated_portfolio=execution.updated_portfolio,
