@@ -12,11 +12,42 @@
   role stay off the Value Manager payload. The operator-approved 30-name
   `VALUE_US_EQUITIES_V1` snapshot is live.
 
+## Resolved by ADR-008 for post-v0.1 implementation
+
+- Deterministic risk uses a minimal universal System Safety Envelope plus
+  versioned Manager Risk Constitutions.
+- The manager proposes an immutable target weight. Validation never silently
+  normalizes or resizes it.
+- Value v1 uses 5–10% starter guidance, a 10% baseline initial ceiling, a 15%
+  enhanced-evidence initial ceiling, a 25% total single-name ceiling, and a
+  five-percentage-point one-cycle add ceiling.
+- Value v1 has no minimum-cash requirement and no deterministic leverage or
+  current-ratio threshold.
+- Confidence is descriptive and has no sizing authority in v1.
+- The current paper System Safety Envelope has no universal concentration
+  ceiling below 100%; real-money catastrophic policy is deferred.
+- Risk constitutions are repository-owned typed artifacts with Decimal strings,
+  independent versions, exact snapshots, and content hashes.
+- A failed recommendation can be reconsidered only in a new explicitly linked
+  decision cycle.
+- During paper trading only, a human may override a `REQUEST_CHANGES`
+  ReviewerResult containing at least one `CRITICAL`-severity finding with an
+  explicit durable flag and dedicated non-empty rationale; deterministic
+  failures remain non-overridable.
+
 ## Still open
 
 - What additional evidence sources should later enrich packets beyond the
   current OVERVIEW, statements, and derived metrics?
-- What position-size and concentration limits should deterministic validation enforce when those policies are introduced?
+- What exact typed, freshness, and provenance prerequisites should make the
+  enhanced Value evidence band reachable?
+- Should later Value policy versions add deterministic leverage or liquidity
+  thresholds, and what evidence would justify their values?
 - What Cash Event schedule should be used after explicitly supplied events?
-- When is a constitution content hash needed in addition to its stable semantic version?
 - What should trigger re-review of an existing position?
+- What Reviewer authority and universal catastrophic concentration ceiling
+  should apply if a real-money workflow is ever designed?
+- After the first activation gate, what operator governance should authorize a
+  new System Safety Envelope version while already-approved decisions remain
+  pending? Execution will use the new active envelope and may stop, but the
+  operational rollout procedure remains open.

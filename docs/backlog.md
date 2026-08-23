@@ -69,3 +69,44 @@ work:
 - Additional active managers and constitutions; SELL and rebalance.
 - Advanced performance analytics, optimization, or forecasting.
 - Export/import backups, cloud persistence, broker integration, and real-money execution.
+
+## Manager-Specific Risk Constitutions
+
+- [x] **Lane 0 — ADR and contract alignment:** accept ADR-008, separate the
+  System Safety Envelope from Manager Risk Constitutions, lock Value v1 policy,
+  remove silent-resizing language, and document legacy and multi-manager
+  boundaries. This item changes no runtime behavior.
+- [ ] **Lane 1 — typed policy domain:** define typed repository artifacts,
+  independent versions, compatibility, canonical SHA-256 hashes, Decimal
+  strings, evidence coverage, risk snapshots, and invariants.
+- [ ] **Lane 2 — two-layer deterministic validation:** enforce Value v1 limits,
+  preserve target weights unchanged, produce immutable in-memory pass/failure
+  artifacts, and add the CRM 25% regression. Do not persist the new artifacts
+  in this lane.
+- [ ] **Lane 3 — durable compatibility:** persist validation and exact policy
+  artifacts/hashes, decode legacy v0.1 journals through the discriminated
+  reference without changing re-encoded historical payloads, and enforce
+  immutability.
+- [ ] **Lane 4 — production application/API:** select policy by manager and
+  portfolio, expose layered results, and add an explicit new linked-cycle
+  revision command.
+- [ ] **Lane 5 — execution-time revalidation:** evaluate the journaled manager
+  policy plus the active System Safety Envelope against current state and
+  persist each execution-policy check.
+- [ ] **Lane 6 — AI Reviewer integration:** generalize Value-specific Reviewer
+  contracts and persist the explicit override flag plus mandatory rationale for
+  a paper-only override of REQUEST_CHANGES containing a CRITICAL finding. This
+  optional adapter may follow risk-policy activation; no AI Reviewer override
+  path exists until it lands.
+- [ ] **Lane 7 — multi-manager experiment:** separate managed portfolios,
+  histories, policy artifacts, and decisions while keeping controlled inputs
+  and performance conventions equal.
+
+Richer evidence acquisition that could unlock the enhanced Value sizing band
+is separate later research work and must not be fabricated by the policy
+implementation.
+
+Policy activation is blocked until Lanes 1–5 are integrated and their
+canonical-hash, migration, restart, persistence, and execution-time
+revalidation tests pass. After activation, new production cycles must use
+current policy references; legacy identity is decode-only.

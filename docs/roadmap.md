@@ -22,6 +22,12 @@ Still later-phase work, not claimed as v0.1:
 - additional managers, SELL, and rebalance
 - brokerage, authentication, scheduling, and cloud persistence
 
+ADR-008 now locks a two-layer risk architecture: a minimal universal System
+Safety Envelope plus versioned Manager Risk Constitutions. Lane 0 aligns the
+contracts only. The current runtime still performs legacy mechanical
+validation; policy artifacts, Value-specific sizing, linked revision cycles,
+and execution-time policy revalidation are not yet implemented.
+
 The phase list below remains the historical plan.
 
 ## Roadmap Principle
@@ -106,6 +112,13 @@ paper-trading history.
 - Add a minimal manager registry and one additional constitution.
 - Compare recommendations and historical outcomes side by side.
 
+Strategy expansion depends on completing the manager-risk implementation and
+giving every manager a separate managed portfolio and history. The initial
+controlled experiment keeps funding, data availability, as-of cutoff,
+opportunity universe, execution convention, approval protocol, performance
+calculation, and benchmark methodology equal. Investment and risk
+constitutions are deliberate strategy variables.
+
 ## Phase 7 — Operational Hardening
 
 Evolve into a more robust platform only after real usage validates the need.
@@ -135,3 +148,36 @@ Evolve into a more robust platform only after real usage validates the need.
 18. Add a second manager/constitution.
 19. Add manager comparison.
 20. Consider operational hardening work.
+
+## Manager Risk Constitution implementation sequence
+
+Lane 0 is ADR and contract alignment only. Subsequent lanes require separate
+approval and must not be inferred to be current capability:
+
+1. **Lane 1 — typed policy domain:** risk versions, typed artifacts, Decimal
+   string parsing, canonical SHA-256 hashing, compatibility, evidence coverage,
+   synchronized risk snapshots, and invariants.
+2. **Lane 2 — two-layer validation:** immutable in-memory system/manager rule
+   artifacts (including failure results), Value v1 enforcement, unchanged
+   target weights, and the CRM 25% regression. Durable policy persistence is
+   not part of Lane 2.
+3. **Lane 3 — durable compatibility:** persist validation plus exact policy
+   artifacts, implement discriminated legacy decoding/re-encoding, indexes,
+   immutability, and restart coverage.
+4. **Lane 4 — application and API:** exact policy selection, operator
+   visibility, explicit linked revisions, and portfolio/manager research
+   lineage.
+5. **Lane 5 — execution revalidation:** current-state snapshots and immutable
+   execution-policy checks.
+6. **Lane 6 — AI Reviewer integration:** generalized manager/reviewer types and
+   durable paper-only REQUEST_CHANGES-with-CRITICAL override flag/rationale.
+   Risk policy may activate without this optional adapter; until Lane 6 lands,
+   production has no AI Reviewer result or override path.
+7. **Lane 7 — multi-manager experiment:** separate managed portfolios and
+   histories under controlled fair-comparison conditions.
+
+Activation is a gate after Lanes 1–5 are integrated and canonical-hash,
+migration, restart, persistence, and execution-revalidation tests pass. Before
+that gate, the new documents describe target behavior only. After it, every
+new production cycle requires current policy references and cannot use legacy
+mechanical policy identity.

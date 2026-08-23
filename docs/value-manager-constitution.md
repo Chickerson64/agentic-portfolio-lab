@@ -23,7 +23,13 @@ The first Value Manager should:
 - explain why a BUY is preferable to simply adding to SPY
 - treat HOLD as a successful outcome when evidence or valuation is insufficient
 
-The manager is a philosophy layer, not an execution system. Deterministic systems still own eligibility, cash, position-size, and concentration enforcement.
+The manager is a philosophy layer, not an execution system. It proposes an
+immutable target weight as part of its investment intent. Deterministic systems
+validate that exact weight against system safety and the versioned Value
+Manager Risk Constitution, then convert a passing weight to notional and
+quantity. They never silently resize it. The current v0.1 runtime implements
+mechanical checks only; Value-specific sizing enforcement is accepted in
+ADR-008 and remains implementation work.
 
 ## Proposed Working Assumptions
 
@@ -291,7 +297,10 @@ It should prefer:
 - cash reserves when the opportunity set is poor
 - avoiding unnecessary churn
 
-The manager should discuss portfolio context, but deterministic code still enforces position sizing and concentration rules.
+The manager should discuss portfolio context, but deterministic code owns
+position sizing and concentration enforcement. Under ADR-008, that enforcement
+uses the Value Manager Risk Constitution; it is not yet implemented in the v0.1
+validator.
 
 ## 20. Concentration Philosophy
 
@@ -303,7 +312,9 @@ The philosophy is:
 - concentration is dangerous when it is driven by overconfidence
 - concentration should be tied to evidence, durability, and clear thesis strength
 
-Hard concentration limits are enforced elsewhere.
+Hard concentration limits belong to the Value Manager Risk Constitution. The
+accepted v1 policy is documented below; the current v0.1 runtime does not yet
+enforce it.
 
 ## 21. Treatment of Volatility
 
@@ -362,6 +373,10 @@ The manager should:
 - lower confidence when evidence is mixed or incomplete
 - avoid sounding certain when the evidence is not certain
 - treat low confidence as a reason to prefer HOLD when appropriate
+
+For v1, confidence is descriptive only. It does not authorize a larger
+position, unlock an evidence band, cure missing evidence, or override a
+deterministic rule.
 
 ## 26. Thesis Invalidation
 
@@ -431,18 +446,66 @@ For the first implementation:
 
 - the manager supports BUY and portfolio-level HOLD only
 - sell-side actions are deferred
-- the manager does not choose exact quantities, prices, or position sizes
-- deterministic systems own eligibility, cash, sizing, and concentration enforcement
+- the manager proposes `target_weight`, but does not choose exact quantities or prices
+- deterministic systems validate the proposed weight unchanged and own eligibility, cash, sizing, concentration, conversion, and execution
+- failed sizing remains journaled and non-executable; no deterministic component silently caps or resizes it
 - the manager must work from a supplied research packet rather than raw research browsing
 - the manager’s output must remain explainable and evidence-backed
 
-## 31. Remaining Open Questions
+## 31. Value Manager Risk Constitution v1
+
+The prose constitution above governs investment reasoning. The separate typed
+Value Manager Risk Constitution governs deterministic strategy limits. Its
+accepted v1 settings are:
+
+| Policy | Value v1 setting |
+|---|---:|
+| Typical starter guidance | 5–10% |
+| Maximum initial position with baseline Research v2 | 10% |
+| Maximum initial position with enhanced evidence | 15% |
+| Maximum total single-name target | 25% |
+| Maximum one-cycle add | 5 percentage points |
+| Minimum cash reserve | None |
+| Confidence sizing authority | None |
+
+The limits are inclusive. Initial means no positive-quantity position for the
+exact `SecurityIdentity` in the synchronized authoritative pre-trade
+portfolio; add means a positive-quantity exact-identity position. Baseline and
+enhanced initial targets must be `<= 0.10` and `<= 0.15`, every target must be
+`<= 0.25`, and an add must satisfy
+`proposed_target - current_exact_identity_weight <= 0.05`. A BUY must increase
+exposure above current exact-identity weight. All applicable rules must pass.
+Exactly-equal boundaries pass.
+
+The 5–10% starter range is guidance, not enforcement. It creates no minimum
+BUY weight. Confidence does not alter any predicate.
+
+These are Value-specific, not universal safety rules. No deterministic
+leverage or current-ratio threshold is adopted in v1. The manager, Reviewer,
+and human must still assess leverage and liquidity from available evidence.
+
+`BASELINE_RESEARCH_V2` is the only currently defined and reachable evidence
+band. It requires exact identity, current or reused-current coverage for
+OVERVIEW plus all four statement endpoints, and evaluation of all 16 locked
+derived metrics. A derivation may retain explicit typed `MissingData`; it need
+not become numeric and must never be treated as zero. Richer
+enhanced/durability evidence is deferred. Until a later evidence contract and
+acquisition path are implemented, no packet qualifies for the 15% enhanced
+initial ceiling.
+
+The System Safety Envelope imposes no concentration ceiling below 100% for the
+current paper experiment. The lower Value limits above are strategy policy.
+Future Growth / Tech and Conservative managers may use materially different
+risk constitutions.
+
+## 32. Remaining Open Questions
 
 These items are intentionally unresolved and should not be invented here.
 
-- What exact qualitative scale, if any, should be used to describe concentration preferences in the first implementation?
 - How should the manager express when a premium is acceptable without introducing numeric thresholds?
-- Should the manager’s confidence calibration be categorical, numeric, or both in the first slice?
 - How should the constitution interact with future Conservative and Growth / Opportunity managers while keeping philosophy boundaries distinct?
-- Should the first implementation include a formal checklist or remain a prose constitution only?
+- What exact additional evidence contract should make the enhanced sizing band reachable?
 
+The typed risk artifact supplements rather than replaces this prose investment
+constitution. See ADR-008 and the
+[Manager Risk Constitution Contract](manager-risk-constitution.md).

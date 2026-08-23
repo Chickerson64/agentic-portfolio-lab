@@ -24,14 +24,15 @@ For the first vertical slice:
 - binary floating-point values must not be used for authoritative portfolio calculations
 - position `total_cost_basis` is authoritative; per-share average cost basis is a derived informational value
 - fractional shares are supported
-- an approved `target_weight` is converted downstream into a dollar amount and a quantity
+- the manager proposes `target_weight`; deterministic validation preserves it unchanged, and only a passing weight is converted downstream into a dollar amount and quantity
 - the SPY benchmark uses the same starting capital and contribution schedule as the live portfolio
 - the portfolio and SPY benchmark use the same valuation timestamp and price convention
 - proposed trades remain distinct from validated trades and executed trades
 - the first vertical slice uses one simulated fill per executed trade
 - the simulation uses the next available regular-session market closing price following approval
 - `constitution_version` is a required stable semantic-style string such as `value-v1.0.0`
-- a constitution content hash may be added later for stronger auditability, but it is deferred from the MVP
+- legacy v0.1 investment-constitution records use a stable version without a content hash
+- ADR-008 requires future Manager Risk Constitutions to persist their exact typed artifact and SHA-256 content hash; this is accepted architecture but not yet runtime behavior
 - every state-changing event must be traceable to a decision cycle
 - validation ownership belongs to deterministic code, not the portfolio manager
 
@@ -49,6 +50,95 @@ These assumptions keep the model implementation-oriented without choosing storag
 - an executed trade is a final, immutable fact in portfolio history
 - benchmark tracking should use the same contribution events and valuation timing as the live portfolio
 - benchmark tracking and live portfolio valuation use the same approved price source and convention within a decision cycle
+
+## Accepted manager-risk extension (not yet implemented)
+
+ADR-008 adds a two-layer deterministic risk contract after v0.1. The current
+domain types and SQLite codec do not yet implement these concepts.
+
+### System Safety Envelope
+
+The versioned universal layer contains only supported mechanics and
+non-bypassable platform safety. For the current paper experiment, it does not
+impose a concentration ceiling below the existing 100% mathematical bound.
+It is a repository-owned typed artifact with an independent version namespace,
+exact immutable snapshot/loading source, and canonical SHA-256 content hash.
+Reusing a version for changed content is invalid.
+
+### Manager Risk Constitution
+
+Each AI-managed portfolio selects a repository-owned typed risk artifact by
+manager type and portfolio mandate. The artifact has an independent version,
+compatible investment-constitution versions, Decimal string fields, exact
+content snapshot, and content hash. Value-specific limits must not become
+universal domain constants.
+
+Policy selection is an explicit mapping keyed by exact managed `portfolio_id`
+and `manager_type`, with exact configured investment/risk versions and hashes.
+There is no implicit latest fallback; missing, ambiguous, incompatible, or
+hash-mismatched policy fails before manager invocation.
+
+### Risk Evaluation Snapshot
+
+An immutable synchronized snapshot will provide deterministic sizing and
+concentration inputs:
+
+- exact portfolio state and portfolio identity;
+- attributable position valuations and total value;
+- cash and current position weights;
+- candidate current weight and proposed target weight;
+- proposed post-trade weights;
+- price identity, provider, market date, observed timestamp, currency, and
+  convention;
+- initial-position or add classification; and
+- typed evidence coverage assessment.
+
+Initial means no positive-quantity position for the exact `SecurityIdentity`
+in this synchronized pre-trade snapshot. Add means a positive-quantity
+exact-identity position. A BUY target must be greater than current
+exact-identity weight. Boundaries are inclusive, and all applicable initial,
+evidence-band, total-target, and add-delta rules must pass.
+
+### Layered validation result
+
+Every risk rule result will identify `SYSTEM_SAFETY` or `MANAGER_POLICY`, the
+stable rule ID and policy version, pass/fail, actual value, threshold, relevant
+input references, and explanation. The aggregate result records both policy
+artifacts and the risk-snapshot lineage.
+
+A failed manager-policy result retains the original recommendation and exact
+target weight, is journaled, creates no `ValidatedTrade`, and is
+non-executable. No automatic cap, resize, or manager retry is permitted.
+
+### Revision and execution checks
+
+Reconsideration uses a new decision cycle with an explicit immutable link to
+the earlier cycle. Immediately before execution, the system rebuilds current
+state and revalidates the approved target against the journaled Manager Risk
+Constitution and currently active System Safety Envelope. An execution attempt
+records its immutable execution-policy check whether it passes or fails.
+
+Revision uses `revision_of_decision_cycle_id` and requires an existing,
+chronologically earlier, terminal non-executable predecessor for the same
+manager and managed portfolio. The chain permits one direct child per cycle
+and prohibits self-reference and cycles. A rerun may choose a different action
+or ticker.
+
+### Policy reference
+
+Policy lineage is a discriminated union:
+
+- `LegacyPolicyReference(kind="LEGACY_MECHANICAL")` exposes presentation
+  identity `legacy-mechanical-v0.1.0` only and contains no fabricated artifact,
+  version, loading source, or hash; or
+- `CurrentPolicyReference(kind="CURRENT")` contains the exact System Safety
+  Envelope, investment constitution, and Manager Risk Constitution versions,
+  immutable artifacts, loading sources, and hashes.
+
+Legacy decoding may expose the first form in memory/API. Re-encoding the
+historical journal omits new policy fields and preserves its existing payload
+structure under append-only transition rules. New cycles require the current
+form after policy activation.
 
 ## Core Concepts
 
@@ -286,7 +376,7 @@ A Trade Proposal is a deterministic candidate trade derived from a portfolio man
 - a trade proposal is not executed
 - a trade proposal may be rejected by validation
 - a trade proposal for this MVP always represents a `BUY`
-- `target_weight` comes from the approved recommendation, not from an LLM-generated conversion
+- `target_weight` is the manager-proposed recommendation value and must be preserved unchanged through proposal and validation
 - quantity calculation rounds down to 8 decimal places
 
 ### 8. Validated Trade
@@ -318,6 +408,7 @@ A Validated Trade is a trade proposal that has passed deterministic checks.
 - validation is deterministic
 - a validated trade records validation-time feasibility and still may not be executed
 - a validated trade must preserve the original proposal lineage
+- a validated trade preserves the manager-proposed target weight unchanged
 - the associated validation result preserves the exact caller-supplied price observation used to validate the trade, including its security, price, provider, market date, timestamp, currency, and price convention
 
 ### 8a. Rejected Proposal Validation Record
@@ -508,7 +599,11 @@ Decision-cycle linkage connects portfolio events back to the manager recommendat
 - `trade_proposal_ids`
 - `validated_trade_ids`
 - `executed_trade_ids`
-- `constitution_version`
+- exact investment-constitution version, immutable artifact snapshot, repository loading source, and hash for post-ADR-008 cycles
+- exact Manager Risk Constitution version, immutable artifact snapshot, repository loading source, and hash for post-ADR-008 cycles
+- exact decision-time System Safety Envelope version, immutable artifact snapshot, repository loading source, and hash for post-ADR-008 cycles
+- `revision_of_decision_cycle_id` when this is an explicit reconsideration
+- discriminated legacy/current policy reference for post-ADR-008 decoding
 
 ### Why it exists
 
@@ -521,7 +616,10 @@ Decision-cycle linkage connects portfolio events back to the manager recommendat
 - a decision cycle may produce zero or more state changes
 - a trade proposal should retain its originating recommendation lineage
 - traceability includes research packet references and cited evidence
-- decision-cycle linkage records the constitution version used for the cycle
+- decision-cycle linkage records the constitution version used for a legacy cycle
+- post-ADR-008 linkage records the exact investment, manager-risk, and decision-time system-safety artifact snapshots, loading sources, versions, and hashes used for the cycle
+- a revision points to a prior cycle and never rewrites it
+- revision lineage is a chronological, acyclic linear chain for one manager and managed portfolio
 
 ## Invariants
 
@@ -553,6 +651,7 @@ It is responsible for:
 - fractional-share rounding and precision checks
 - security eligibility checks
 - maximum-position checks
+- manager-specific initial/add/total target checks after ADR-008 is implemented
 - required-field checks
 - duplicate or conflicting event checks
 - portfolio invariants
@@ -560,6 +659,11 @@ It is responsible for:
 - persistence of rejected proposal validation records
 
 The portfolio domain model describes the facts and lifecycle; it does not make subjective decisions.
+
+The current v0.1 validator implements mechanical feasibility and does not yet
+enforce manager-specific position-size or concentration limits. References to
+maximum-position enforcement in this contract describe the accepted ADR-008
+target, not current runtime capability.
 
 ## What Belongs in Deterministic Code
 
@@ -635,6 +739,8 @@ The following are intentionally deferred:
 - recurring contribution schedules
 - multiple fills per executed trade
 - partial fill aggregation
+- Manager Risk Constitutions and layered validation remain deferred from v0.1 runtime but are the next accepted implementation sequence
+- multiple independently managed portfolios and histories for fair manager competition
 
 ## Open Questions
 

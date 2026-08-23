@@ -36,9 +36,10 @@ For the first implementation:
 - for a portfolio-level `HOLD`, `ticker` is `null` and `target_weight` is `null`
 - `target_weight` is the allocation shape, expressed as a decimal from `0.0` to `1.0`
 - a `BUY` requires `target_weight` to be strictly greater than `0`; `HOLD` uses `null`
-- the deterministic portfolio engine converts `target_weight` into dollars and fractional shares
+- after the exact proposed `target_weight` passes deterministic validation, the portfolio engine converts it into dollars and fractional shares
 - `confidence_score` is an integer from `0` to `100`
 - `confidence_score` reflects confidence in the decision given the supplied evidence, not probability of positive returns
+- `confidence_score` is descriptive only in v1 and never increases deterministic sizing authority
 - any categorical confidence label is derived downstream
 - every recommendation requires `decision_rationale`
 - `investment_thesis` is required for `BUY` and `null` for `HOLD`
@@ -46,7 +47,9 @@ For the first implementation:
 - the manager must not invent new evidence sources
 - review triggers may be event-based or scheduled
 - prior reviewer feedback is optional input and is not required in the first vertical slice
-- deterministic downstream code owns schema validation, ticker eligibility, evidence-reference verification, numeric bounds, cash feasibility, position-size enforcement, concentration enforcement, dollar/share calculation, execution, and portfolio mutation
+- the manager proposes `target_weight`; deterministic code validates that exact value unchanged and, only after it passes, converts it to dollars and fractional shares
+- deterministic downstream code owns schema validation, ticker eligibility, evidence-reference verification, numeric bounds, cash feasibility, manager-specific position-size and concentration enforcement, dollar/share calculation, execution, and portfolio mutation; manager-specific enforcement is accepted post-v0.1 architecture and is not yet implemented
+- failed sizing remains journaled, creates no validated trade, and is non-executable; deterministic code never caps, normalizes, or silently resizes it
 - the manager may discuss concentration implications but must not be treated as the enforcing authority
 
 ## Inputs
@@ -163,40 +166,59 @@ Deterministic or AI-generated:
 
 - deterministic input from market-data systems
 
-### 6. Investment constitution
+### 6. Investment constitution and Manager Risk Constitution
 
 What it is:
 
-The governing rules for this specific portfolio manager.
+Two separate governing artifacts for this specific portfolio manager:
 
-May include:
+- an investment constitution for philosophy and evidence interpretation; and
+- a typed Manager Risk Constitution for deterministic strategy limits.
+
+The investment constitution may include:
 
 - philosophy definition
 - mandate
 - approved universe
 - prohibited assets or actions
-- concentration limits
-- maximum position size
 - minimum conviction thresholds
 - required evidence standards
 - benchmark expectation
 - hold/trim/add/exit preferences
 
+A product-wide inability to execute an instrument or action belongs to the
+System Safety Envelope. A manager mandate that declines an otherwise supported
+instrument, sector, or company belongs to its investment/risk constitution.
+
+The Manager Risk Constitution includes versioned sizing guidance, enforceable
+initial/add/total limits, evidence bands, cash-deployment policy, and any
+manager-specific balance-sheet, liquidity, or diversification policy. It is a
+repository-owned typed artifact with Decimal values serialized as strings and
+a persisted content hash.
+
+The application selects both constitutions from an explicit mapping keyed by
+exact managed portfolio identity plus manager type, with configured exact
+versions and hashes. It never selects an implicit latest artifact. Missing,
+ambiguous, incompatible, or hash-mismatched policy fails before manager
+invocation.
+
 Why it exists:
 
 - different managers must behave differently without changing the surrounding system
-- the constitution makes the philosophy explicit and auditable
+- the investment constitution makes philosophy explicit and auditable
+- the Manager Risk Constitution makes deterministic strategy limits explicit and auditable
 - the same manager class can be reused with different rules over time
 
 Deterministic or AI-generated:
 
-- deterministic configuration input
+- deterministic versioned configuration inputs
 
 ### 7. Previous decisions
 
 What it is:
 
 - prior recommendation for the same ticker
+- explicit linked predecessor decision cycle when this is a revision
 - prior recommendation for related holdings if relevant
 - prior thesis summary
 - prior invalidation points
@@ -208,10 +230,17 @@ Why it exists:
 - the manager should know whether it is continuing, revising, or reversing a prior thesis
 - consistency across runs matters for auditability
 - review feedback should influence future recommendations
+- invalid recommendations can be reconsidered without rewriting the original cycle
 
 Deterministic or AI-generated:
 
 - deterministic input from decision history
+
+Revision uses the exact field `revision_of_decision_cycle_id`. Its predecessor
+must be an existing, earlier, terminal non-executable cycle for the same
+manager and managed portfolio. Lineage is linear: no self-reference, cycles,
+or multiple direct revision children. Because the complete decision reruns,
+action and ticker may differ from the predecessor.
 
 ### 8. Review feedback, if available
 
@@ -291,12 +320,18 @@ Why it exists:
 - Shape: `target_weight`.
 - Range: decimal from `0.0` to `1.0`.
 - Meaning: proposed percentage of total portfolio value.
-- Deterministic or AI-generated: AI-proposed, then normalized deterministically downstream if needed.
+- Deterministic or AI-generated: AI-proposed, then validated unchanged and converted deterministically downstream only if it passes.
 
 Why it exists:
 
 - sizing is part of the recommendation
 - risk checks need a concrete magnitude
+
+For a BUY, the proposed target must increase exposure above the synchronized
+current exact-`SecurityIdentity` weight. Initial-versus-add classification and
+all inclusive Value-specific boundaries are defined in the separate Manager
+Risk Constitution Contract. Exactly-equal ceilings pass; guidance creates no
+minimum.
 
 #### `thesis`
 
@@ -345,6 +380,7 @@ Why it exists:
 
 - confidence supports triage and review thresholds
 - low-confidence ideas may still be useful, but they should be visible as such
+- confidence does not raise a position-size or evidence-band ceiling in v1
 
 #### `evidence`
 
@@ -480,6 +516,7 @@ The following should be deterministic wherever possible in downstream code:
 - allocation feasibility
 - prohibited-action checks
 - concentration checks
+- Manager Risk Constitution version and compatibility checks
 
 ## Responsibilities
 
@@ -505,6 +542,7 @@ The following should be deterministic wherever possible in downstream code:
 - mutate portfolio state
 - place orders
 - bypass risk validation
+- rely on confidence to bypass a sizing or evidence limit
 - assume access to data it was not given
 - invent missing facts
 - rely on hidden memory as a source of truth
@@ -586,5 +624,9 @@ These items are intentionally unresolved and should not be invented in this docu
 - What is the exact input schema for candidate evaluation when multiple candidates are supplied?
 - Should `why_not_spy` be a free-form narrative or a structured set of reasons?
 - What are the exact event types and schedule types allowed for `review_triggers`?
-- What manager-specific constitution should the first Value Manager use?
 - How should the first implementation represent candidate priority or ranking internally, if needed?
+
+Manager-specific sizing, versioning, evidence-band, revision, and Reviewer
+override decisions are settled in ADR-008 and the
+[Manager Risk Constitution Contract](manager-risk-constitution.md). The exact
+typed runtime schema is deferred to its implementation lanes.

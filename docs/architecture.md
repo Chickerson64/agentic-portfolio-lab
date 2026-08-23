@@ -52,6 +52,20 @@ Manager. A constitution defines the objective, investment philosophy, capital
 deployment policy, constraints, and decision cadence. A Passive Index
 Constitution is deterministic, while active constitutions may use a manager.
 
+For AI-managed portfolios, investment methodology and deterministic risk
+policy are separate versioned artifacts. The investment constitution governs
+manager reasoning. A Manager Risk Constitution governs strategy-specific
+sizing and concentration. Both sit inside a minimal universal System Safety
+Envelope. See ADR-008 and the
+[Manager Risk Constitution Contract](manager-risk-constitution.md).
+
+The System Safety Envelope is itself a repository-owned typed artifact with an
+independent version, exact immutable snapshot/loading source, and canonical
+SHA-256 hash. A decision journal records the exact envelope and manager-policy
+artifacts used initially. An execution-policy check records the journaled
+manager policy and the exact currently active safety envelope used at
+execution.
+
 ### Cash events
 
 Cash Events create buying power and are separate from investment or execution.
@@ -62,22 +76,39 @@ available cash under its constitution.
 
 Normal code, not an LLM.
 
-It validates:
+The accepted architecture separates:
 
-- cash availability
-- position sizing
-- ticker eligibility
-- concentration limits
-- required fields
-- prohibited actions
+- universal system-safety validation, including supported mechanics, cash,
+  exact identity, currency, provenance, chronology, and immutable lineage; and
+- manager-policy validation, including versioned position-size,
+  concentration, evidence-band, and add limits.
+
+The manager's proposed `target_weight` is immutable. Validation either accepts
+that exact weight or records a failure; it never silently resizes it. Only a
+passing weight is converted deterministically to dollars and quantity.
+
+The current v0.1 runtime implements the mechanical system-safety subset. It
+does **not** yet load or enforce Manager Risk Constitutions, initial-position
+limits, or concentration limits. ADR-008 locks the target architecture; later
+lanes implement it.
+
+Policy selection is keyed by exact managed portfolio identity plus manager
+type and configured constitution versions/hashes. There is no implicit latest
+fallback; missing, ambiguous, hash-mismatched, or incompatible selection fails
+before manager invocation.
 
 ### AI investment reviewer
 
 Critiques reasoning, evidence quality, hallucinations, and methodology drift.
+It runs only after deterministic validation passes. In the accepted paper
+policy, a human override applies specifically to `REQUEST_CHANGES` with at
+least one `CRITICAL`-severity finding and requires a durable explicit flag and
+dedicated rationale. No AI Reviewer adapter exists in v0.1.
 
 ### Human approval layer
 
 Prevents unauthorized execution and keeps the system aligned with the user’s intent.
+It cannot override failed deterministic safety or manager-policy validation.
 
 ### Benchmark portfolio
 
@@ -96,9 +127,15 @@ Constitution determines behavior
   ↓
 Manager produces intent (or deterministic rule)
   ↓
-Validation
+System Safety validation
+  ↓
+Manager Risk Constitution validation
+  ↓
+AI review when configured
   ↓
 Approval
+  ↓
+Execution-time revalidation
   ↓
 Execution
   ↓
@@ -106,6 +143,21 @@ Portfolio updated
   ↓
 Repeat
 ```
+
+Failed validation remains journaled with the original recommendation and is
+non-executable. It creates no resized recommendation. Reconsideration requires
+a new explicitly linked decision cycle.
+
+Revision lineage uses `revision_of_decision_cycle_id` and is a linear chain
+between terminal non-executable cycles for the same manager and managed
+portfolio. The complete manager decision reruns, so action or ticker may
+change.
+
+Immediately before managed execution, the accepted architecture revalidates
+the exact approved target against current portfolio and price state, the
+journaled Manager Risk Constitution, and the currently active System Safety
+Envelope. This execution-time manager-policy recheck is not yet implemented in
+v0.1.
 
 ## Current application shape (v0.1)
 
@@ -135,6 +187,18 @@ convention.
 HOLD is a valid terminal manager decision. Managed paper execution requires
 deterministic validation, human approval, and backend executable readiness.
 There is no autonomous execution.
+
+Current validation proves mechanical feasibility; it must not be described as
+enforcing Value-specific sizing or concentration. Existing v0.1 journals are
+legacy mechanical validations and remain immutable. New typed and content-
+hashed risk-policy artifacts, synchronized risk snapshots, layered rule
+results, linked revision cycles, and execution-time policy records are planned
+post-v0.1 work under ADR-008.
+
+The new policy contract activates only after implementation Lanes 1–5 and
+their migration/restart tests are integrated. Until then, new cycles continue
+to use current v0.1 behavior; after activation, new cycles require current
+policy references and cannot create legacy references.
 
 Not in v0.1: additional managers, an AI reviewer adapter, brokerage
 integration, scheduling, authentication, and cloud persistence.

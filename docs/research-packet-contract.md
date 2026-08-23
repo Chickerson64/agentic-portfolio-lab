@@ -706,15 +706,60 @@ The example shows the expected pattern:
 - negative evidence is retained
 - no investment decision is embedded in the packet
 
+## Risk-policy evidence coverage (accepted, not yet implemented)
+
+ADR-008 introduces typed evidence coverage for deterministic manager-policy
+sizing. This is a coverage assessment, not an investment-quality score and not
+a new responsibility of the Research Packet.
+
+`BASELINE_RESEARCH_V2` is the only currently defined and reachable band. It
+requires exact `SecurityIdentity` agreement among candidate, packet, and every
+endpoint record. Required endpoints are `OVERVIEW`, `INCOME_STATEMENT`,
+`BALANCE_SHEET`, `CASH_FLOW`, and `EARNINGS`. Under the existing packet and
+cycle-as-of freshness contracts, each coverage record must be
+`FETCHED_THIS_CYCLE` (current) or `REUSED_CURRENT`; `STALE` and `MISSING`
+disqualify the band.
+
+All current deterministic derivations must be evaluated:
+
+- `net_debt`, `current_ratio`, `gross_margin`, `operating_margin`, and
+  `net_margin`;
+- `fcf`, `ttm_ocf`, `ttm_capex`, `ttm_fcf`, `ttm_net_income`, and
+  `ttm_revenue`; and
+- `cash_conversion`, `share_count_change`, `market_cap`, `enterprise_value`,
+  and `fcf_yield`.
+
+Each required metric record must retain its formula/metric identity,
+attributable typed input references, deterministic reliability, and freshness.
+Its value may be either a typed Decimal or explicit typed `MissingData`.
+Baseline does not require every derivation to be numerically present. A missing
+metric record or lost input attribution disqualifies the band; a correctly
+preserved `MissingData` result does not.
+
+The assessment verifies that required evidence is present and attributable. It
+does not claim that cash flow is normalized, leverage is safe, business
+durability is established, or the evidence economically supports a BUY.
+Missing facts and derived `MissingData` are preserved and never inferred or
+interpreted as zero.
+
+An enhanced evidence band is reserved by the Value Manager Risk Constitution,
+but its evidence topics and acquisition path are deliberately deferred. Until
+a later contract defines and implements them, no Research Packet can qualify
+for enhanced sizing.
+
 ## Remaining Open Questions
 
-These items are intentionally unresolved and should not be invented here.
+These are general/future packet-schema questions. They do not alter
+`BASELINE_RESEARCH_V2`'s locked five endpoint coverage records, 16 evaluated
+derived-metric records, exact-identity requirement, or typed `MissingData`
+semantics described above.
 
 - What is the exact canonical JSON shape of the packet envelope?
 - What is the canonical set of required fields for every Research Packet in the MVP?
 - Which valuation metrics are mandatory versus optional in the first slice?
 - How should evidence quality be scored, if at all?
-- What is the exact representation for missing values?
+- Beyond the existing typed `MissingData` used by baseline Research v2, what
+  missing-value representation should future packet sections use?
 - How should upstream systems encode primary versus secondary sources?
 - Should market-cap and liquidity data be required in the first implementation?
 - Should the packet include analyst estimates, and if so, in what sections?
