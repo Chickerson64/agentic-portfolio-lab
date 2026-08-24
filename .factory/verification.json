@@ -1,0 +1,30 @@
+[
+  {
+    "name": "Python test suite",
+    "executable": "pytest",
+    "args": ["-q"],
+    "env": {
+      "PYTHONPATH": "src"
+    }
+  },
+  {
+    "name": "Python compile check",
+    "executable": "python",
+    "args": ["-m", "compileall", "-q", "src"]
+  },
+  {
+    "name": "Frontend syntax check",
+    "executable": "node",
+    "args": ["--check", "frontend/app.js"]
+  },
+  {
+    "name": "Frontend test suite",
+    "executable": "node",
+    "args": ["--test", "frontend/app.test.mjs"]
+  },
+  {
+    "name": "Git diff check",
+    "executable": "git",
+    "args": ["diff", "--check"]
+  }
+]
