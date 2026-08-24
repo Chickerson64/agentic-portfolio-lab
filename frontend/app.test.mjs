@@ -39,7 +39,15 @@ const recommendation = (action = "HOLD") => ({
   valuation: "Valuation context.", risks: ["Competition"], confidence_score: 80, evidence: [evidence()],
   why_not_spy: "Security-specific opportunity.", thesis_invalidation: ["Cash flow deteriorates"], review_triggers: ["Material earnings change"],
 });
-const validation = (tradeId = null) => ({ status: "PASSED", validation_timestamp: "2026-08-11T12:00:00+00:00", validated_trade_id: tradeId, rules: [{ rule_id: "RISK-1", status: "PASSED", reason: "Within policy", actual_value: null, allowed_threshold: null }] });
+const validation = (tradeId = null) => ({ status: "PASSED", validation_timestamp: "2026-08-11T12:00:00+00:00", validated_trade_id: tradeId, rules: [{ rule_id: "RISK-1", status: "PASSED", reason: "Within policy", actual_value: null, allowed_threshold: null, layer: "SYSTEM_SAFETY", policy_version: "safety-v1", input_references: ["portfolio"] }] });
+const policyEvaluation = ({ mechanicallyExecutable = true, advisoryFindings = [] } = {}) => ({
+  policy_kind: "CURRENT", investment_constitution_version: "investment-v1", investment_constitution_hash: "investment-hash",
+  system_safety_envelope_version: "safety-v1", system_safety_envelope_hash: "safety-hash",
+  manager_risk_constitution_version: "manager-risk-v1", manager_risk_constitution_hash: "manager-risk-hash",
+  mechanically_executable: mechanicallyExecutable,
+  advisory_findings: advisoryFindings,
+});
+const materialAdvisory = () => ({ finding_id: "NORMAL_STARTER_GUIDANCE_DEVIATION", severity: "MATERIAL", reason: "Starter guidance differs from the normal starter guidance.", actual_value: "0.25", guidance_value: "0.10", input_references: ["recommendation.target_weight"] });
 const reviewer = () => ({ decision: "APPROVE", reviewed_at: "2026-08-11T12:10:00+00:00", findings: [{ severity: "INFO", category: "EVIDENCE_USAGE", message: "Evidence cited.", related_evidence_ids: ["ev-1"], related_recommendation_field: "evidence" }] });
 const approval = () => ({ decision: "APPROVED", decision_maker_id: "human-1", decided_at: "2026-08-11T12:20:00+00:00", comment: "Approved." });
 const execution = () => ({
@@ -48,10 +56,11 @@ const execution = () => ({
   source_provider_identity: "demo-provider", market_date: "2026-08-11", price_convention: "regular-session-close",
   executed_at: "2026-08-11T12:30:00+00:00", execution_source: "simulated",
 });
-const decision = ({ action = "HOLD", withReviewer = true, withApproval = true, withExecution = false, readiness = null } = {}) => ({
+const decision = ({ action = "HOLD", withReviewer = true, withApproval = true, withExecution = false, readiness = null, policy = policyEvaluation(), validationResult = validation(withExecution ? "validated-1" : null) } = {}) => ({
   decision_cycle_id: "cycle-1", portfolio_id: "portfolio-1", manager_type: "VALUE", constitution_version: "value-v1.0.0",
   research_batch_id: "batch-1", journaled_at: "2026-08-11T12:05:00+00:00", produced_at: "2026-08-11T12:00:00+00:00",
-  recommendation: recommendation(action), validation: validation(withExecution ? "validated-1" : null),
+  recommendation: recommendation(action), validation: validationResult,
+  policy_evaluation: policy,
   reviewer: withReviewer ? reviewer() : null, approval: withApproval ? approval() : null, execution: withExecution ? execution() : null,
   execution_readiness: readiness ?? { executable: false, reason_code: action === "HOLD" ? "HOLD" : "NOT_APPROVED", decision_cycle_id: "cycle-1", action, security: action === "BUY" ? security() : null, approval_status: withApproval ? "APPROVED" : null, validation_status: "PASSED" },
 });
@@ -88,7 +97,32 @@ assert.equal(holdView.reviewer, null);
 assert.equal(holdView.approval, null);
 assert.equal(holdView.execution, null);
 assert.equal(holdView.executionReadiness.reasonCode, "HOLD");
+assert.equal(holdView.policyEvaluation.mechanicallyExecutable, true);
+assert.deepEqual(holdView.policyEvaluation.advisoryFindings, []);
 assert.equal(normalizeDecision(null), null);
+
+const advisoryPolicyView = normalizeDecision(decision({
+  action: "BUY",
+  policy: policyEvaluation({ advisoryFindings: [materialAdvisory()] }),
+}));
+assert.equal(advisoryPolicyView.policyEvaluation.policyKind, "CURRENT");
+assert.equal(advisoryPolicyView.policyEvaluation.managerRiskConstitutionVersion, "manager-risk-v1");
+assert.equal(advisoryPolicyView.policyEvaluation.advisoryFindings[0].severity, "MATERIAL");
+assert.equal(advisoryPolicyView.policyEvaluation.advisoryFindings[0].reason, "Starter guidance differs from the normal starter guidance.");
+
+const legacyPolicyView = normalizeDecision({
+  ...decision(),
+  policy_evaluation: {
+    policy_kind: "LEGACY_MECHANICAL", investment_constitution_version: null, investment_constitution_hash: null,
+    system_safety_envelope_version: null, system_safety_envelope_hash: null,
+    manager_risk_constitution_version: null, manager_risk_constitution_hash: null,
+    mechanically_executable: true, advisory_findings: [],
+  },
+});
+assert.equal(legacyPolicyView.policyEvaluation.policyKind, "LEGACY_MECHANICAL");
+assert.equal(legacyPolicyView.policyEvaluation.systemSafetyEnvelopeVersion, null);
+assert.equal(legacyPolicyView.policyEvaluation.managerRiskConstitutionHash, null);
+assert.deepEqual(legacyPolicyView.policyEvaluation.advisoryFindings, []);
 
 const buyView = normalizeDecision(decision({ action: "BUY", withExecution: true }));
 assert.equal(buyView.recommendation.targetWeight, "0.25");
@@ -102,6 +136,81 @@ for (const reasonCode of ["HOLD", "NOT_APPROVED", "REJECTED", "VALIDATION_FAILED
 }
 const readyDecision = normalizeDecision(decision({ action: "BUY", readiness: { executable: true, reason_code: "READY", decision_cycle_id: "cycle-1", action: "BUY", security: security(), approval_status: "APPROVED", validation_status: "PASSED" } }));
 assert.equal(isExecutionEnabled(readyDecision), true);
+
+const renderDecisionCenter = async (rawDecision, label) => {
+  const targets = Object.fromEntries(["#app", "#overview", "#decision", "#research", "#research-document", "#portfolio", "#history", "#portfolio-name", "#health-status", "#refresh-prices", "#build-research", "#bootstrap-overview"].map((selector) => [selector, { innerHTML: "", textContent: "", addEventListener() {}, querySelectorAll() { return []; } }]));
+  globalThis.document = {
+    querySelector: (selector) => targets[selector] ?? null,
+    querySelectorAll: () => [],
+    getElementById: () => null,
+  };
+  globalThis.fetch = async (url) => {
+    const path = new URL(url).pathname;
+    const payloads = {
+      "/health": { status: "ok", state_mode: "sqlite", persisted: true, synthetic: false },
+      "/dashboard": { ...dashboard(), latest_decision: rawDecision },
+      "/decisions/latest": rawDecision,
+      "/research/latest": research(),
+      "/decisions": history(),
+      "/portfolio": portfolio(),
+      "/performance": dashboard().performance,
+    };
+    return { status: 200, ok: true, json: async () => payloads[path] };
+  };
+  const renderModule = await import(`./app.js?decision-center=${label}`);
+  await renderModule.start();
+  return targets["#decision"].innerHTML;
+};
+
+const currentNoFindingMarkup = await renderDecisionCenter(decision({
+  action: "BUY",
+  readiness: { executable: true, reason_code: "READY", decision_cycle_id: "cycle-1", action: "BUY", security: security(), approval_status: "APPROVED", validation_status: "PASSED" },
+}), "current-no-findings");
+assert.match(currentNoFindingMarkup, /Manager Risk/);
+assert.match(currentNoFindingMarkup, /No Manager Risk advisory findings were recorded/);
+assert.match(currentNoFindingMarkup, /Recorded yes/);
+assert.match(currentNoFindingMarkup, /Ready for paper execution/);
+assert.match(currentNoFindingMarkup, /<span>Target weight<\/span><strong>25\.00%<\/strong>/);
+
+const legacyMarkup = await renderDecisionCenter({
+  ...decision({ action: "BUY" }),
+  policy_evaluation: {
+    policy_kind: "LEGACY_MECHANICAL", investment_constitution_version: null, investment_constitution_hash: null,
+    system_safety_envelope_version: null, system_safety_envelope_hash: null,
+    manager_risk_constitution_version: null, manager_risk_constitution_hash: null,
+    mechanically_executable: true, advisory_findings: [],
+  },
+}, "legacy-mechanical");
+const legacySystemSafetyMarkup = legacyMarkup.match(/<article class="surface policy-panel system-safety">([\s\S]*?)<\/article>/)?.[1];
+assert.ok(legacySystemSafetyMarkup);
+assert.match(legacySystemSafetyMarkup, /<h2>Not recorded<\/h2>/);
+assert.match(legacySystemSafetyMarkup, /<span class="policy-status">NOT RECORDED<\/span>/);
+assert.doesNotMatch(legacySystemSafetyMarkup, /PASSED|FAILED/);
+assert.match(legacyMarkup, /Legacy mechanical validation/);
+assert.match(legacyMarkup, /<article class="surface policy-panel legacy-mechanical">[\s\S]*?<span class="policy-status">PASSED<\/span>/);
+
+const advisoryExecutableMarkup = await renderDecisionCenter(decision({
+  action: "BUY",
+  policy: policyEvaluation({ advisoryFindings: [materialAdvisory()] }),
+  readiness: { executable: true, reason_code: "READY", decision_cycle_id: "cycle-1", action: "BUY", security: security(), approval_status: "APPROVED", validation_status: "PASSED" },
+}), "current-material-advisory");
+assert.match(advisoryExecutableMarkup, /MATERIAL advisory/);
+assert.match(advisoryExecutableMarkup, /Starter guidance differs from the normal starter guidance/);
+assert.match(advisoryExecutableMarkup, /Ready for paper execution/);
+assert.doesNotMatch(advisoryExecutableMarkup, /NOT EXECUTABLE/);
+
+const mechanicallyBlockedMarkup = await renderDecisionCenter(decision({
+  action: "BUY",
+  policy: policyEvaluation({ mechanicallyExecutable: false }),
+  validationResult: { ...validation(), status: "FAILED" },
+  readiness: { executable: false, reason_code: "VALIDATION_FAILED", decision_cycle_id: "cycle-1", action: "BUY", security: security(), approval_status: "APPROVED", validation_status: "FAILED" },
+}), "mechanically-blocked");
+assert.match(mechanicallyBlockedMarkup, /Recorded no/);
+assert.match(mechanicallyBlockedMarkup, /Hard deterministic result: FAILED/);
+assert.match(mechanicallyBlockedMarkup, /VALIDATION_FAILED/);
+assert.match(mechanicallyBlockedMarkup, /NOT EXECUTABLE/);
+assert.doesNotMatch(mechanicallyBlockedMarkup, /Ready for paper execution/);
+delete globalThis.document;
 
 const researchView = normalizeResearch(research());
 assert.equal(researchView.packets[0].candidateId, "candidate-1");
@@ -342,6 +451,7 @@ globalThis.fetch = originalFetch;
 assert.equal(new ApiError(404, "not found").status, 404);
 assert.throws(() => normalizeDashboard({}), ApiContractError);
 assert.throws(() => normalizeDecision({ ...decision(), recommendation: { action: "BUY" } }), ApiContractError);
+assert.throws(() => { const { policy_evaluation, ...missingPolicyDecision } = decision(); normalizeDecision(missingPolicyDecision); }, ApiContractError);
 assert.throws(() => normalizeResearch({ ...research(), packets: [{ ticker: "MSFT" }] }), ApiContractError);
 assert.throws(() => normalizeHistory({ entries_newest_first: [], chart_points_oldest_first: [{ timestamp: "now" }] }), ApiContractError);
 
