@@ -85,7 +85,7 @@ def test_durable_buy_approval_execution_flow_survives_restart_and_api_reads(tmp_
         json={"decision_maker_id": "local-operator", "decided_at": (START + timedelta(minutes=4)).isoformat()},
     )
     assert approved.status_code == 200
-    assert approved.json()["execution_readiness"]["reason_code"] == "READY"
+    assert approved.json()["execution_readiness"]["reason_code"] == "POST_APPROVAL_QUOTE_REQUIRED"
 
     # Execution must choose a persisted quote after the approval boundary.
     current = store.open_run()

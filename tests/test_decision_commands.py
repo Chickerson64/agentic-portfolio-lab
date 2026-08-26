@@ -116,7 +116,7 @@ def test_fake_crm_current_policy_is_visible_separately_in_api(tmp_path) -> None:
     crm_price = replace(price, security=SecurityIdentity("CRM", "EQUITY", "NASDAQ", "USD"))
     store.save_transition(replace(store.open_run(), research_batches=(batch, crm_batch), price_observations=(price, crm_price)))
     journal = RunValueManagerService(store, manager=_Manager(target_weight=Decimal("0.25"))).run(occurred_at=START + timedelta(minutes=3)).journal_entry
-    response = decision_memo_response(journal, None, None)
+    response = decision_memo_response(journal, None, None, price_observations=())
     assert response.recommendation.ticker == "CRM"
     assert response.recommendation.target_weight == "0.25"
     assert response.policy_evaluation.mechanically_executable
@@ -219,13 +219,70 @@ def test_api_commands_and_readiness_are_authoritative_after_restart(tmp_path) ->
     )
     assert approved.status_code == 200
     assert approved.json()["execution_readiness"] == {
-        "executable": True, "reason_code": "READY", "decision_cycle_id": str(batch.decision_cycle_id),
+        "executable": False, "reason_code": "POST_APPROVAL_QUOTE_REQUIRED", "decision_cycle_id": str(batch.decision_cycle_id),
         "action": "BUY", "security": {"ticker": batch.packets[0].ticker, "security_type": "EQUITY", "exchange": "NASDAQ", "currency": "USD"},
         "approval_status": "APPROVED", "validation_status": "PASSED",
     }
     assert client.get("/decisions/latest").json()["approval"]["decision"] == "APPROVED"
     assert len(client.get("/decisions").json()["entries_newest_first"]) == 1
-    assert client.get("/dashboard").json()["latest_decision"]["execution_readiness"]["reason_code"] == "READY"
+    assert client.get("/dashboard").json()["latest_decision"]["execution_readiness"]["reason_code"] == "POST_APPROVAL_QUOTE_REQUIRED"
+
+
+def test_execution_readiness_requires_a_persisted_post_approval_quote(tmp_path) -> None:
+    from fastapi.testclient import TestClient
+
+    store, batch, price = _prepared_store(tmp_path)
+    client = TestClient(create_app(database_path=str(tmp_path / "run.sqlite"), value_manager=_Manager()))
+    assert client.post("/commands/run-value-manager", json={"occurred_at": (START + timedelta(minutes=3)).isoformat()}).status_code == 200
+    approval_at = START + timedelta(minutes=4)
+    approved = client.post(
+        f"/commands/decisions/{batch.decision_cycle_id}/approve",
+        json={"decision_maker_id": "operator", "decided_at": approval_at.isoformat()},
+    )
+    assert approved.status_code == 200
+    assert approved.json()["execution_readiness"]["reason_code"] == "POST_APPROVAL_QUOTE_REQUIRED"
+    assert approved.json()["execution_readiness"]["executable"] is False
+
+    execution_quote = replace(price, observed_at=approval_at + timedelta(minutes=1))
+    state = store.open_run()
+    assert state is not None
+    store.save_transition(replace(state, price_observations=(*state.price_observations, execution_quote)))
+    refreshed = client.get("/decisions/latest")
+    assert refreshed.status_code == 200
+    assert refreshed.json()["execution_readiness"]["reason_code"] == "READY"
+    assert refreshed.json()["execution_readiness"]["executable"] is True
+
+
+@pytest.mark.parametrize(("endpoint", "expected"), (("approve", "APPROVED"), ("reject", "REJECTED")))
+def test_decision_outcome_response_remains_bound_to_the_requested_non_latest_cycle(tmp_path, endpoint, expected) -> None:
+    from fastapi.testclient import TestClient
+
+    store, first_batch, _ = _prepared_store(tmp_path)
+    client = TestClient(create_app(database_path=str(tmp_path / "run.sqlite"), value_manager=_Manager()))
+    assert client.post(
+        "/commands/run-value-manager", json={"occurred_at": (START + timedelta(minutes=3)).isoformat()},
+    ).status_code == 200
+    second_batch = replace(
+        first_batch,
+        batch_id="second-batch",
+        decision_cycle_id=uuid4(),
+        created_at=START + timedelta(minutes=4),
+        as_of_timestamp=START + timedelta(minutes=4),
+    )
+    state = store.open_run()
+    assert state is not None
+    store.save_transition(replace(state, research_batches=(*state.research_batches, second_batch)))
+    assert client.post(
+        "/commands/run-value-manager", json={"occurred_at": (START + timedelta(minutes=5)).isoformat()},
+    ).status_code == 200
+
+    outcome = client.post(
+        f"/commands/decisions/{first_batch.decision_cycle_id}/{endpoint}",
+        json={"decision_maker_id": "operator", "decided_at": (START + timedelta(minutes=6)).isoformat()},
+    )
+    assert outcome.status_code == 200
+    assert outcome.json()["decision_cycle_id"] == str(first_batch.decision_cycle_id)
+    assert outcome.json()["approval"]["decision"] == expected
 
 
 def test_latest_research_is_shared_by_read_and_command_paths_not_insertion_order(tmp_path) -> None:
@@ -271,16 +328,30 @@ def test_serialized_execution_readiness_covers_every_current_reason() -> None:
     ready_approval = demo.history_entries[0].approval
     executed_trade = demo.history_entries[0].executed_trade
     assert ready_approval is not None and executed_trade is not None
+    ready_quote = PriceObservation(
+        ready_journal.risk_validation_result.validated_trade.security,
+        Decimal("100"),
+        ready_approval.decided_at.date(),
+        ready_approval.decided_at,
+        "USD",
+        "test-provider",
+        "test-quote",
+    )
     cases = {
-        "READY": decision_memo_response(ready_journal, ready_approval, None),
-        "ALREADY_EXECUTED": decision_memo_response(ready_journal, ready_approval, executed_trade),
-        "HOLD": decision_memo_response(demo.journal_entry, None, None),
-        "NOT_APPROVED": decision_memo_response(ready_journal, None, None),
+        "READY": decision_memo_response(
+            ready_journal, ready_approval, None,
+            price_observations=(ready_quote,),
+        ),
+        "ALREADY_EXECUTED": decision_memo_response(
+            ready_journal, ready_approval, executed_trade, price_observations=(),
+        ),
+        "HOLD": decision_memo_response(demo.journal_entry, None, None, price_observations=()),
+        "NOT_APPROVED": decision_memo_response(ready_journal, None, None, price_observations=()),
     }
     rejected = DecisionApproval(
         ready_journal, "operator", ApprovalDecision.REJECTED, ready_journal.journaled_at + timedelta(minutes=1)
     )
-    cases["REJECTED"] = decision_memo_response(ready_journal, rejected, None)
+    cases["REJECTED"] = decision_memo_response(ready_journal, rejected, None, price_observations=())
     failed_journal = DecisionJournalEntry(
         ready_journal.decision_result,
         DeterministicRiskValidator().validate(
@@ -289,7 +360,7 @@ def test_serialized_execution_readiness_covers_every_current_reason() -> None:
         ),
         demo.journal_entry.journaled_at,
     )
-    cases["VALIDATION_FAILED"] = decision_memo_response(failed_journal, None, None)
+    cases["VALIDATION_FAILED"] = decision_memo_response(failed_journal, None, None, price_observations=())
     for reason, response in cases.items():
         readiness = response.execution_readiness
         assert readiness.reason_code == reason

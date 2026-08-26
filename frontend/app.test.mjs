@@ -131,7 +131,7 @@ assert.equal(buyView.execution.validatedTradeId, "validated-1");
 assert.equal(buyView.execution.security.ticker, "MSFT");
 assert.equal(buyView.executionReadiness.security.ticker, "MSFT");
 
-for (const reasonCode of ["HOLD", "NOT_APPROVED", "REJECTED", "VALIDATION_FAILED", "ALREADY_EXECUTED"]) {
+for (const reasonCode of ["HOLD", "NOT_APPROVED", "REJECTED", "VALIDATION_FAILED", "POST_APPROVAL_QUOTE_REQUIRED", "ALREADY_EXECUTED"]) {
   assert.equal(isExecutionEnabled(normalizeDecision(decision({ action: reasonCode === "HOLD" ? "HOLD" : "BUY", readiness: { executable: false, reason_code: reasonCode, decision_cycle_id: "cycle-1", action: reasonCode === "HOLD" ? "HOLD" : "BUY", security: reasonCode === "HOLD" ? null : security(), approval_status: null, validation_status: "PASSED" } }))), false);
 }
 const readyDecision = normalizeDecision(decision({ action: "BUY", readiness: { executable: true, reason_code: "READY", decision_cycle_id: "cycle-1", action: "BUY", security: security(), approval_status: "APPROVED", validation_status: "PASSED" } }));

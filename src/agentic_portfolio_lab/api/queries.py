@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Protocol
+from uuid import UUID
 
 from agentic_portfolio_lab.dashboard import DashboardView, DecisionHistoryArtifacts, build_dashboard_view
 from agentic_portfolio_lab.dashboard_demo import DashboardDemoData
@@ -14,6 +15,7 @@ from agentic_portfolio_lab.domain.portfolio import SecurityIdentity
 from agentic_portfolio_lab.domain.benchmark_fulfillment import PassiveIndexFulfillment
 from agentic_portfolio_lab.domain.research import ResearchBatch
 from agentic_portfolio_lab.domain.screening import ScreeningRun
+from agentic_portfolio_lab.domain.valuation import PriceObservation
 from agentic_portfolio_lab.application.research_selection import latest_authoritative_research_batch
 
 from .models import (
@@ -58,6 +60,7 @@ class MvpReadStateSnapshot:
     screening_runs: tuple[ScreeningRun, ...] = ()
     benchmark_fulfillments: tuple[PassiveIndexFulfillment, ...] = ()
     benchmark_fulfillment_status: str = "PENDING_NO_ELIGIBLE_PRICE"
+    price_observations: tuple[PriceObservation, ...] = ()
 
     @classmethod
     def from_dashboard_demo(cls, data: DashboardDemoData) -> "MvpReadStateSnapshot":
@@ -92,6 +95,7 @@ class MvpReadState(Protocol):
     source_metadata: StateSourceMetadata
     benchmark_fulfillment_status: str
     benchmark_fulfillments: tuple[PassiveIndexFulfillment, ...]
+    price_observations: tuple[PriceObservation, ...]
 
 
 class LatestResourceNotFound(ValueError):
@@ -177,6 +181,24 @@ class MvpQueryService:
             journal,
             approval,
             self._execution_for_journal(journal),
+            price_observations=self._state.price_observations,
+        )
+
+    def decision_for_approval(self, decision_cycle_id: UUID) -> DecisionMemoResponse:
+        matches = tuple(
+            item for item in self._state.history_entries
+            if item.journal_entry.decision_cycle_id == decision_cycle_id
+        )
+        if len(matches) != 1:
+            raise ValueError("decision cycle must identify exactly one canonical history entry")
+        artifact = matches[0]
+        if artifact.approval is None:
+            raise ValueError("decision outcome must retain its canonical approval")
+        return decision_memo_response(
+            artifact.journal_entry,
+            artifact.approval,
+            artifact.executed_trade,
+            price_observations=self._state.price_observations,
         )
 
     def _screening_run_for(self, batch: ResearchBatch) -> ScreeningRun | None:

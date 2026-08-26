@@ -167,7 +167,7 @@ def create_router(
             raise HTTPException(status_code=502, detail={"code": "value_manager_unavailable", "message": str(error)}) from error
         except (TypeError, ValueError) as error:
             raise HTTPException(status_code=422, detail={"code": "value_manager_invalid", "message": str(error)}) from error
-        return decision_memo_response(result.journal_entry, None, None)
+        return _query_or_unavailable(service().latest_decision)
 
     def _record_human_decision(
         decision_cycle_id: str,
@@ -189,7 +189,7 @@ def create_router(
             raise HTTPException(status_code=409, detail={"code": "decision_conflict", "message": str(error)}) from error
         except (TypeError, ValueError) as error:
             raise HTTPException(status_code=422, detail={"code": "decision_approval_invalid", "message": str(error)}) from error
-        return decision_memo_response(approval.journal_entry, approval, None)
+        return _query_or_unavailable(lambda: service().decision_for_approval(approval.decision_cycle_id))
 
     @router.post("/commands/decisions/{decision_cycle_id}/approve", response_model=DecisionMemoResponse)
     def approve_decision(decision_cycle_id: str, command: DecisionApprovalCommand) -> DecisionMemoResponse:

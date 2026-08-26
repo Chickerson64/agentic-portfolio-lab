@@ -489,6 +489,7 @@ class SQLiteMvpReadState:
             screening_runs=state.screening_runs,
             benchmark_fulfillments=state.benchmark_fulfillments,
             benchmark_fulfillment_status=getattr(state, "benchmark_fulfillment_status", "PENDING_NO_ELIGIBLE_PRICE"),
+            price_observations=state.price_observations,
         )
 
     @staticmethod

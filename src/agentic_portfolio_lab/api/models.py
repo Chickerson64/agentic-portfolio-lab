@@ -20,6 +20,7 @@ from agentic_portfolio_lab.domain.portfolio import SecurityIdentity
 from agentic_portfolio_lab.domain.research import MissingData, ResearchBatch, ResearchPacket
 from agentic_portfolio_lab.domain.screening import ScreeningRun
 from agentic_portfolio_lab.domain.trades import ExecutedTrade
+from agentic_portfolio_lab.domain.valuation import PriceObservation
 
 
 class ApiModel(BaseModel):
@@ -560,6 +561,8 @@ def execution_readiness_response(
     journal: DecisionJournalEntry,
     approval: DecisionApproval | None,
     executed_trade: ExecutedTrade | None,
+    *,
+    price_observations: tuple[PriceObservation, ...],
 ) -> ExecutionReadinessResponse:
     recommendation = journal.decision_result.recommendation
     validation = journal.risk_validation_result
@@ -576,6 +579,13 @@ def execution_readiness_response(
         code = "NOT_APPROVED"
     elif approval.decision.value != "APPROVED":
         code = "REJECTED"
+    elif validation.validated_trade is not None and not any(
+        item.security == validation.validated_trade.security and item.observed_at >= approval.decided_at
+        for item in price_observations
+    ):
+        # Execution deliberately selects a quote obtained after approval so a
+        # person never authorizes a trade at an unobserved later price.
+        code = "POST_APPROVAL_QUOTE_REQUIRED"
     else:
         code = "READY"
     return ExecutionReadinessResponse(
@@ -593,6 +603,8 @@ def decision_memo_response(
     journal: DecisionJournalEntry,
     approval: DecisionApproval | None,
     executed_trade: ExecutedTrade | None,
+    *,
+    price_observations: tuple[PriceObservation, ...],
 ) -> DecisionMemoResponse:
     validation = journal.risk_validation_result
     return DecisionMemoResponse(
@@ -626,7 +638,9 @@ def decision_memo_response(
         reviewer=_reviewer_response(journal),
         approval=_approval_response(approval),
         execution=execution_response(executed_trade),
-        execution_readiness=execution_readiness_response(journal, approval, executed_trade),
+        execution_readiness=execution_readiness_response(
+            journal, approval, executed_trade, price_observations=price_observations,
+        ),
     )
 
 
