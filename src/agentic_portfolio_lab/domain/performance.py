@@ -356,21 +356,48 @@ class PerformanceComparison:
             != self.benchmark_history.snapshots[0].portfolio.starting_capital
         ):
             raise ValueError("managed and benchmark histories must share starting_capital")
-        if len(self.managed_history.snapshots) != len(self.benchmark_history.snapshots):
+        provenance_fields = (
+            "as_of_timestamp",
+            "currency",
+            "source_provider_identity",
+            "market_date",
+            "source_price_timestamp",
+            "price_convention",
+        )
+        if len(self.managed_history.snapshots) == len(self.benchmark_history.snapshots):
+            pairs = zip(self.managed_history.snapshots, self.benchmark_history.snapshots, strict=True)
+            for managed_snapshot, benchmark_snapshot in pairs:
+                self._validate_paired_snapshots(managed_snapshot, benchmark_snapshot, provenance_fields)
+            return
+        # Managed execution is intentionally unpaired. A later paired
+        # mark-to-market makes the latest states comparable without rewriting
+        # the immutable earlier execution transition.
+        if self.managed_history.snapshots[-1].timestamp != self.benchmark_history.snapshots[-1].timestamp:
             raise ValueError("managed and benchmark histories must have equal snapshot counts")
-        for managed_snapshot, benchmark_snapshot in zip(self.managed_history.snapshots, self.benchmark_history.snapshots, strict=True):
-            for field_name in (
-                "as_of_timestamp",
-                "currency",
-                "source_provider_identity",
-                "market_date",
-                "source_price_timestamp",
-                "price_convention",
-            ):
-                if getattr(managed_snapshot.valuation, field_name) != getattr(benchmark_snapshot.valuation, field_name):
-                    raise ValueError(f"managed and benchmark snapshots must share valuation {field_name}")
-            if managed_snapshot.cash_events != benchmark_snapshot.cash_events:
-                raise ValueError("managed and benchmark snapshots must share the same CashEvent schedule")
+        managed_index = 0
+        for benchmark_snapshot in self.benchmark_history.snapshots:
+            matches = tuple(
+                index for index in range(managed_index, len(self.managed_history.snapshots))
+                if self.managed_history.snapshots[index].timestamp == benchmark_snapshot.timestamp
+            )
+            if not matches:
+                raise ValueError("managed and benchmark histories must have equal snapshot counts")
+            managed_index = matches[0] + 1
+            self._validate_paired_snapshots(
+                self.managed_history.snapshots[matches[0]], benchmark_snapshot, provenance_fields,
+            )
+        managed_events = tuple(event.event_id for snapshot in self.managed_history.snapshots for event in snapshot.cash_events)
+        benchmark_events = tuple(event.event_id for snapshot in self.benchmark_history.snapshots for event in snapshot.cash_events)
+        if managed_events != benchmark_events:
+            raise ValueError("managed and benchmark histories must share the same CashEvent schedule")
+
+    @staticmethod
+    def _validate_paired_snapshots(managed_snapshot, benchmark_snapshot, provenance_fields) -> None:
+        for field_name in provenance_fields:
+            if getattr(managed_snapshot.valuation, field_name) != getattr(benchmark_snapshot.valuation, field_name):
+                raise ValueError(f"managed and benchmark snapshots must share valuation {field_name}")
+        if managed_snapshot.cash_events != benchmark_snapshot.cash_events:
+            raise ValueError("managed and benchmark snapshots must share the same CashEvent schedule")
 
     @property
     def managed_cumulative_return(self) -> Decimal:

@@ -252,6 +252,57 @@ class PortfolioValuation:
         )
 
     @classmethod
+    def from_portfolio_mark_to_market(
+        cls,
+        portfolio: Portfolio,
+        price_observations: Iterable[PriceObservation],
+        *,
+        as_of_timestamp: datetime,
+        market_date: date,
+        source_price_timestamp: datetime,
+        source_provider_identity: str,
+        price_convention: str,
+    ) -> "PortfolioValuation":
+        """Value one portfolio from a coherent persisted refresh set.
+
+        A paced provider may observe distinct securities at different moments.
+        The supplied source timestamp is the refresh-set valuation boundary,
+        and each position observation must not postdate it.
+        """
+        if not isinstance(portfolio, Portfolio):
+            raise TypeError("portfolio must be a Portfolio")
+        return cls._from_components(
+            subject_id=portfolio.portfolio_id,
+            cash_balance=portfolio.cash_balance,
+            positions=portfolio.positions,
+            price_observations=price_observations,
+            as_of_timestamp=as_of_timestamp,
+            market_date=market_date,
+            source_price_timestamp=source_price_timestamp,
+            source_provider_identity=source_provider_identity,
+            price_convention=price_convention,
+            allow_observations_before_source_timestamp=True,
+        )
+
+    @classmethod
+    def from_benchmark_mark_to_market(
+        cls,
+        benchmark: "BenchmarkPortfolio",
+        price_observations: Iterable[PriceObservation],
+        **metadata,
+    ) -> "PortfolioValuation":
+        if not isinstance(benchmark, BenchmarkPortfolio):
+            raise TypeError("benchmark must be a BenchmarkPortfolio")
+        return cls._from_components(
+            subject_id=benchmark.portfolio.portfolio_id,
+            cash_balance=benchmark.portfolio.cash_balance,
+            positions=benchmark.portfolio.positions,
+            price_observations=price_observations,
+            allow_observations_before_source_timestamp=True,
+            **metadata,
+        )
+
+    @classmethod
     def _from_components(
         cls,
         *,
@@ -264,6 +315,7 @@ class PortfolioValuation:
         source_price_timestamp: datetime,
         source_provider_identity: str,
         price_convention: str,
+        allow_observations_before_source_timestamp: bool = False,
     ) -> "PortfolioValuation":
         if not isinstance(cash_balance, CashBalance):
             raise TypeError("cash_balance must be a CashBalance")
@@ -277,7 +329,10 @@ class PortfolioValuation:
                 raise ValueError("observation currency must match cash balance currency")
             if observation.market_date != market_date:
                 raise ValueError("observation market_date must match valuation market_date")
-            if observation.observed_at != source_price_timestamp:
+            if allow_observations_before_source_timestamp:
+                if observation.observed_at > source_price_timestamp:
+                    raise ValueError("observation timestamp must not postdate valuation source_price_timestamp")
+            elif observation.observed_at != source_price_timestamp:
                 raise ValueError("observation timestamp must match valuation source_price_timestamp")
             if observation.source_provider_identity != _canonical_metadata_text(
                 source_provider_identity, field_name="source_provider_identity"

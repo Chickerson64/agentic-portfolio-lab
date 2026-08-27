@@ -15,6 +15,7 @@ from agentic_portfolio_lab.application.build_research import ResearchCycleInputs
 from agentic_portfolio_lab.application.local_state import LocalRunMetadata, PersistedRunState
 from agentic_portfolio_lab.application.market_configuration import SPY_BENCHMARK
 from agentic_portfolio_lab.application.local_state_codec import decode_run_state, encode
+from agentic_portfolio_lab.application.mark_to_market import MarkToMarketService
 from agentic_portfolio_lab.domain.provider_fundamentals import ProviderEndpoint, ProviderFundamentalRecord
 from agentic_portfolio_lab.domain.research import ResearchBatch
 from agentic_portfolio_lab.domain.screening import ScreeningRun
@@ -370,9 +371,16 @@ class SQLitePriceRefreshState:
             elif prior != observation:
                 raise ValueError(f"price observations must not rewrite persisted artifact {identity}")
         if additions:
-            self._store.save_transition(
-                replace(current, price_observations=(*current.price_observations, *additions))
-            )
+            refreshed = replace(current, price_observations=(*current.price_observations, *additions))
+            if (
+                current.benchmark_fulfillment_status == "FULFILLED"
+                and any(item.security in MarkToMarketService.required_securities(current) for item in additions)
+            ):
+                # Valuation needs the complete provider refresh set: an
+                # unchanged canonical quote may be required alongside a new
+                # held-security quote, even though only the latter is added.
+                refreshed = MarkToMarketService.propose(refreshed, observations)
+            self._store.save_transition(refreshed)
 
 
 class SQLiteResearchBatchState:
@@ -497,19 +505,11 @@ class SQLiteMvpReadState:
         managed, benchmark = state.managed_history, state.benchmark_history
         if len(managed.snapshots) == len(benchmark.snapshots):
             return False
-        if managed.currency != benchmark.currency:
-            raise ValueError("managed and benchmark histories must share currency")
-        if managed.portfolio_id == benchmark.benchmark_portfolio_id:
-            raise ValueError("managed and benchmark histories must have distinct portfolio identities")
-        if managed.snapshots[0].portfolio.starting_capital != benchmark.snapshots[0].portfolio.starting_capital:
-            raise ValueError("managed and benchmark histories must share starting_capital")
-        for left, right in zip(managed.snapshots, benchmark.snapshots, strict=False):
-            for field in ("as_of_timestamp", "currency", "source_provider_identity", "market_date", "source_price_timestamp", "price_convention"):
-                if getattr(left.valuation, field) != getattr(right.valuation, field):
-                    raise ValueError(f"managed and benchmark snapshots must share valuation {field}")
-            if left.cash_events != right.cash_events:
-                raise ValueError("managed and benchmark snapshots must share the same CashEvent schedule")
-        return True
+        try:
+            PerformanceComparison(managed, benchmark)
+        except ValueError:
+            return True
+        return False
 
     @property
     def source_metadata(self):
