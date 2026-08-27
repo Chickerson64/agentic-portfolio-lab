@@ -21,6 +21,7 @@ from agentic_portfolio_lab.domain.valuation import BenchmarkPortfolio, PriceObse
 from agentic_portfolio_lab.domain.portfolio import Portfolio
 from agentic_portfolio_lab.domain.portfolio_service import PortfolioService
 from agentic_portfolio_lab.domain.execution_check import ExecutionSafetyCheck
+from agentic_portfolio_lab.domain.price_refresh import PriceRefreshOperation, PriceRefreshOperationStatus
 from agentic_portfolio_lab.domain.policy import CurrentPolicyReference
 from decimal import Decimal
 
@@ -51,6 +52,7 @@ class PersistedRunState:
     benchmark_history: BenchmarkPerformanceHistory
     funding_results: tuple[CashEventFundingResult, ...] = ()
     price_observations: tuple[PriceObservation, ...] = ()
+    latest_price_refresh_operation: PriceRefreshOperation | None = None
     research_batches: tuple[ResearchBatch, ...] = ()
     journal_entries: tuple[DecisionJournalEntry, ...] = ()
     approvals: tuple[DecisionApproval, ...] = ()
@@ -87,6 +89,9 @@ class PersistedRunState:
         }:
             raise ValueError("benchmark_fulfillment_status is invalid")
         self._validate_benchmark_status()
+        operation = self.latest_price_refresh_operation
+        if operation is not None and not isinstance(operation, PriceRefreshOperation):
+            raise TypeError("latest_price_refresh_operation must be PriceRefreshOperation or None")
 
     def _validate_benchmark_fulfillments(self) -> None:
         fulfillments = tuple(getattr(self, "benchmark_fulfillments", ()))

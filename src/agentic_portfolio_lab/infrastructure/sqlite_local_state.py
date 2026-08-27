@@ -170,6 +170,16 @@ class SQLiteLocalRunStore:
             key=lambda observation: (observation.security, observation.observed_at),
             label="price observations",
         )
+        current_operation = getattr(current, "latest_price_refresh_operation", None)
+        proposed_operation = getattr(proposed, "latest_price_refresh_operation", None)
+        if current_operation is not None:
+            if proposed_operation is None:
+                raise ValueError("save_transition must retain the latest price refresh operation")
+            if proposed_operation.operation_id != current_operation.operation_id:
+                if current_operation.status.value == "IN_PROGRESS" or proposed_operation.status.value != "IN_PROGRESS":
+                    raise ValueError("a terminal price refresh operation may only advance to a new in-progress operation")
+            elif current_operation.status.value != "IN_PROGRESS" and proposed_operation != current_operation:
+                raise ValueError("terminal price refresh operations are immutable")
         SQLiteLocalRunStore._require_immutable_records(
             current.research_batches,
             proposed.research_batches,
@@ -347,6 +357,42 @@ class SQLitePriceRefreshState:
         self._store = store
 
     def apply_price_refresh(self, observations: tuple[PriceObservation, ...]) -> None:
+        """Legacy direct adapter retained for existing internal callers."""
+        self._apply_observations(observations, operation_id=None, completed_at=None)
+
+    def begin_price_refresh(self, operation) -> None:
+        from agentic_portfolio_lab.domain.price_refresh import PriceRefreshOperationStatus
+        from agentic_portfolio_lab.application.refresh_prices import PriceRefreshConflict
+        current = self._store.open_run()
+        if current is None:
+            raise ValueError("local SQLite run has not been initialized")
+        latest = getattr(current, "latest_price_refresh_operation", None)
+        if latest is not None and latest.status is PriceRefreshOperationStatus.IN_PROGRESS:
+            raise PriceRefreshConflict("a price refresh is already in progress")
+        self._store.save_transition(replace(current, latest_price_refresh_operation=operation))
+
+    def complete_price_refresh(self, operation_id, observations: tuple[PriceObservation, ...], completed_at) -> None:
+        self._apply_observations(observations, operation_id=operation_id, completed_at=completed_at)
+
+    def fail_price_refresh(self, operation_id, *, completed_at, failure_code: str, failure_message: str) -> None:
+        from agentic_portfolio_lab.domain.price_refresh import PriceRefreshOperation, PriceRefreshOperationStatus
+        current = self._store.open_run()
+        if current is None or current.latest_price_refresh_operation is None or current.latest_price_refresh_operation.operation_id != operation_id:
+            raise ValueError("price refresh operation is not current")
+        prior = current.latest_price_refresh_operation
+        failed = PriceRefreshOperation(operation_id, PriceRefreshOperationStatus.FAILED, prior.started_at, prior.provider_identity, prior.expected_security_count, completed_at, failure_code=failure_code, failure_message=failure_message)
+        self._store.save_transition(replace(current, latest_price_refresh_operation=failed))
+
+    def recover_interrupted_price_refresh(self, operation_id, *, recovered_at) -> None:
+        from agentic_portfolio_lab.domain.price_refresh import PriceRefreshOperation, PriceRefreshOperationStatus
+        current = self._store.open_run()
+        if current is None or current.latest_price_refresh_operation is None or current.latest_price_refresh_operation.operation_id != operation_id or current.latest_price_refresh_operation.status is not PriceRefreshOperationStatus.IN_PROGRESS:
+            raise ValueError("no in-progress price refresh operation requires recovery")
+        prior = current.latest_price_refresh_operation
+        recovered = PriceRefreshOperation(prior.operation_id, PriceRefreshOperationStatus.FAILED, prior.started_at, prior.provider_identity, prior.expected_security_count, recovered_at, failure_code="refresh_interrupted", failure_message="operator marked the unfinished refresh as interrupted")
+        self._store.save_transition(replace(current, latest_price_refresh_operation=recovered))
+
+    def _apply_observations(self, observations: tuple[PriceObservation, ...], *, operation_id, completed_at) -> None:
         if not observations:
             raise ValueError("a refresh must contain at least one observation")
         if not all(isinstance(observation, PriceObservation) for observation in observations):
@@ -370,8 +416,14 @@ class SQLitePriceRefreshState:
                 existing[identity] = observation
             elif prior != observation:
                 raise ValueError(f"price observations must not rewrite persisted artifact {identity}")
+        refreshed = replace(current, price_observations=(*current.price_observations, *additions)) if additions else current
+        if operation_id is not None:
+            from agentic_portfolio_lab.domain.price_refresh import PriceRefreshOperation, PriceRefreshOperationStatus
+            prior = current.latest_price_refresh_operation
+            if prior is None or prior.operation_id != operation_id:
+                raise ValueError("price refresh operation is not current")
+            refreshed = replace(refreshed, latest_price_refresh_operation=PriceRefreshOperation(operation_id, PriceRefreshOperationStatus.COMPLETED, prior.started_at, prior.provider_identity, prior.expected_security_count, completed_at, len(additions), max(item.observed_at for item in observations)))
         if additions:
-            refreshed = replace(current, price_observations=(*current.price_observations, *additions))
             if (
                 current.benchmark_fulfillment_status == "FULFILLED"
                 and any(item.security in MarkToMarketService.required_securities(current) for item in additions)
@@ -380,6 +432,7 @@ class SQLitePriceRefreshState:
                 # unchanged canonical quote may be required alongside a new
                 # held-security quote, even though only the latter is added.
                 refreshed = MarkToMarketService.propose(refreshed, observations)
+        if additions or operation_id is not None:
             self._store.save_transition(refreshed)
 
 
@@ -498,6 +551,7 @@ class SQLiteMvpReadState:
             benchmark_fulfillments=state.benchmark_fulfillments,
             benchmark_fulfillment_status=getattr(state, "benchmark_fulfillment_status", "PENDING_NO_ELIGIBLE_PRICE"),
             price_observations=state.price_observations,
+            latest_price_refresh_operation=state.latest_price_refresh_operation,
         )
 
     @staticmethod

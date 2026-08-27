@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Protocol
+from datetime import datetime, timezone
 from uuid import UUID
 
 from agentic_portfolio_lab.dashboard import DashboardView, DecisionHistoryArtifacts, build_dashboard_view
@@ -27,6 +28,7 @@ from .models import (
     PerformanceResponse,
     PortfolioSnapshotResponse,
     ResearchBatchResponse,
+    PriceRefreshStatusResponse,
     benchmark_snapshot_response,
     decision_memo_response,
     history_response,
@@ -61,6 +63,7 @@ class MvpReadStateSnapshot:
     benchmark_fulfillments: tuple[PassiveIndexFulfillment, ...] = ()
     benchmark_fulfillment_status: str = "PENDING_NO_ELIGIBLE_PRICE"
     price_observations: tuple[PriceObservation, ...] = ()
+    latest_price_refresh_operation: object | None = None
 
     @classmethod
     def from_dashboard_demo(cls, data: DashboardDemoData) -> "MvpReadStateSnapshot":
@@ -96,6 +99,7 @@ class MvpReadState(Protocol):
     benchmark_fulfillment_status: str
     benchmark_fulfillments: tuple[PassiveIndexFulfillment, ...]
     price_observations: tuple[PriceObservation, ...]
+    latest_price_refresh_operation: object | None
 
 
 class LatestResourceNotFound(ValueError):
@@ -137,6 +141,22 @@ class MvpQueryService:
             state_mode=metadata.mode,
             persisted=metadata.persisted,
             synthetic=metadata.synthetic,
+        )
+
+    def latest_price_refresh(self) -> PriceRefreshStatusResponse:
+        operation = getattr(self._state, "latest_price_refresh_operation", None)
+        if operation is None:
+            raise LatestResourceNotFound("price refresh operation")
+        reported_at = datetime.now(timezone.utc)
+        freshness = None if operation.latest_source_timestamp is None else max(0, int((reported_at - operation.latest_source_timestamp).total_seconds()))
+        return PriceRefreshStatusResponse(
+            operation_id=str(operation.operation_id), status=operation.status.value,
+            started_at=operation.started_at.isoformat(), completed_at=None if operation.completed_at is None else operation.completed_at.isoformat(),
+            provider_identity=operation.provider_identity, expected_security_count=operation.expected_security_count,
+            persisted_observation_count=operation.persisted_observation_count,
+            latest_source_timestamp=None if operation.latest_source_timestamp is None else operation.latest_source_timestamp.isoformat(),
+            failure_code=operation.failure_code, failure_message=operation.failure_message,
+            reported_at=reported_at.isoformat(), freshness_seconds=freshness,
         )
 
     def held_securities(self) -> tuple[SecurityIdentity, ...]:

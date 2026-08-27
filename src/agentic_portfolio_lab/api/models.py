@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+from uuid import UUID
 from pydantic import BaseModel, ConfigDict
 
 from agentic_portfolio_lab.dashboard import HistoryPanel
@@ -321,6 +322,25 @@ class PriceRefreshResponse(ApiModel):
     provider_identity: str
     latest_source_timestamp: str
     price_convention: str
+
+
+class PriceRefreshStatusResponse(ApiModel):
+    operation_id: str
+    status: str
+    started_at: str
+    completed_at: str | None
+    provider_identity: str
+    expected_security_count: int
+    persisted_observation_count: int | None
+    latest_source_timestamp: str | None
+    failure_code: str | None
+    failure_message: str | None
+    reported_at: str
+    freshness_seconds: int | None
+
+
+class PriceRefreshRecoveryCommand(ApiModel):
+    operation_id: UUID
 
 
 class ExecutePaperTradeResponse(ApiModel):

@@ -410,6 +410,11 @@ export function normalizePriceRefresh(payload) {
     priceConvention: text(field(payload, "price_convention", context), `${context}.price_convention`),
   };
 }
+export function normalizePriceRefreshStatus(payload) {
+  if (payload === null) return null;
+  const context = "price refresh status";
+  return { operationId: text(field(payload, "operation_id", context), `${context}.operation_id`), status: text(field(payload, "status", context), `${context}.status`), startedAt: text(field(payload, "started_at", context), `${context}.started_at`), completedAt: nullableText(field(payload, "completed_at", context), `${context}.completed_at`), providerIdentity: text(field(payload, "provider_identity", context), `${context}.provider_identity`), expectedSecurityCount: number(field(payload, "expected_security_count", context), `${context}.expected_security_count`), persistedObservationCount: field(payload, "persisted_observation_count", context), latestSourceTimestamp: nullableText(field(payload, "latest_source_timestamp", context), `${context}.latest_source_timestamp`), failureCode: nullableText(field(payload, "failure_code", context), `${context}.failure_code`), failureMessage: nullableText(field(payload, "failure_message", context), `${context}.failure_message`), reportedAt: text(field(payload, "reported_at", context), `${context}.reported_at`), freshnessSeconds: field(payload, "freshness_seconds", context) };
+}
 export function normalizeBuildResearch(payload) {
   const context = "research build";
   return { batchId: text(field(payload, "batch_id", context), `${context}.batch_id`), decisionCycleId: text(field(payload, "decision_cycle_id", context), `${context}.decision_cycle_id`), packetCount: number(field(payload, "packet_count", context), `${context}.packet_count`), provider: text(field(payload, "source_provider_identity", context), `${context}.source_provider_identity`), asOfTimestamp: text(field(payload, "as_of_timestamp", context), `${context}.as_of_timestamp`) };
@@ -427,7 +432,7 @@ export function normalizeBootstrapOverview(payload) {
 }
 
 export async function loadApplication() {
-  const [health, dashboard, decision, research, history, portfolio, performance] = await Promise.all([
+  const [health, dashboard, decision, research, history, portfolio, performance, priceRefresh] = await Promise.all([
     apiClient.get("/health"),
     apiClient.get("/dashboard"),
     apiClient.get("/decisions/latest", { allowNotFound: true }),
@@ -435,6 +440,7 @@ export async function loadApplication() {
     apiClient.get("/decisions"),
     apiClient.get("/portfolio"),
     apiClient.get("/performance"),
+    apiClient.get("/price-refresh/latest", { allowNotFound: true }),
   ]);
   return {
     health: normalizeHealth(health),
@@ -444,6 +450,7 @@ export async function loadApplication() {
     history: normalizeHistory(history),
     portfolio: normalizePortfolio(portfolio, "portfolio"),
     performance: normalizePerformance(performance, "performance"),
+    priceRefresh: normalizePriceRefreshStatus(priceRefresh),
   };
 }
 
@@ -475,6 +482,14 @@ const initials = (ticker) => string(ticker, "—").slice(0, 2);
 const esc = (value) => string(value).replace(/[&<>'"]/g, (character) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", "'":"&#39;", '"':"&quot;" })[character]);
 const app = typeof document === "undefined" ? null : document.querySelector("#app");
 let refreshStatus = null;
+function refreshSummary(operation) {
+  if (!operation) return null;
+  if (operation.status === "IN_PROGRESS") return `Refreshing prices since ${dateTime(operation.startedAt)} via ${operation.providerIdentity}.`;
+  if (operation.status === "FAILED") return `Price refresh failed: ${operation.failureMessage || operation.failureCode}.`;
+  const minutes = Math.floor(Number(operation.freshnessSeconds) / 60);
+  const age = minutes < 1 ? "less than a minute" : `${minutes} minute${minutes === 1 ? "" : "s"}`;
+  return `Prices refreshed ${age} ago · ${dateTime(operation.latestSourceTimestamp)} · ${operation.providerIdentity} · ${operation.persistedObservationCount} prices.`;
+}
 
 function chart(points) {
   if (points.length < 2) return `<div class="chart-empty"><div><strong>Performance trend unavailable</strong><br><span>At least two synchronized managed and SPY valuations are required.</span></div></div>`;
@@ -621,7 +636,7 @@ function renderHistory(state) {
 function empty(title, message) { return `<section class="empty-state"><span class="kicker">No data</span><h1>${esc(title)}</h1><p>${esc(message)}</p></section>`; }
 function render(state) {
   app.innerHTML = nav(); document.querySelector("#portfolio-name").textContent = state.dashboard.portfolio.portfolioName;
-  document.querySelector("#health-status").textContent = refreshStatus || `${state.health.stateMode} · ${state.health.persisted ? "persisted" : "in-memory"}${state.health.synthetic ? " · demo" : ""}`;
+  document.querySelector("#health-status").textContent = refreshStatus || refreshSummary(state.priceRefresh) || `${state.health.stateMode} · ${state.health.persisted ? "persisted" : "in-memory"}${state.health.synthetic ? " · demo" : ""}`;
   renderOverview(state); renderDecision(state); renderResearch(state); renderPortfolio(state); renderHistory(state); bindCurrentTimeButtons();
   document.querySelectorAll("[data-view],[data-view-jump]").forEach((button) => button.addEventListener("click", () => { const view = button.dataset.view || button.dataset.viewJump; document.querySelectorAll(".view").forEach((section) => section.classList.toggle("active", section.id === view)); document.querySelectorAll("[data-view]").forEach((node) => node.classList.toggle("active", node.dataset.view === view)); }));
 }
@@ -650,8 +665,11 @@ export async function refreshPrices({ button = document.querySelector("#refresh-
     status.textContent = refreshStatus;
     await reload();
   } catch (error) {
-    refreshStatus = `Price refresh failed: ${error.message}`;
-    status.textContent = refreshStatus;
+    if (error.status === 0) {
+      refreshStatus = "Refresh connection lost; checking durable refresh status on reconnect.";
+      try { refreshStatus = null; await reload(); } catch { refreshStatus = "Refresh connection lost; checking durable refresh status on reconnect."; /* The API is still unavailable; this is not provider evidence. */ }
+    } else refreshStatus = `Price refresh failed: ${error.message}`;
+    if (refreshStatus !== null) status.textContent = refreshStatus;
   } finally {
     button.disabled = false; button.textContent = "Refresh prices";
   }

@@ -34,10 +34,10 @@ def _types() -> dict[str, type[object]]:
     # Imports are intentionally explicit: only known local domain/application
     # artifacts may be rehydrated from a durable database document.
     from agentic_portfolio_lab.dashboard import DecisionHistoryArtifacts
-    from agentic_portfolio_lab.domain import approval, benchmark_fulfillment, cash_events, constitution, execution_check, journal, performance, policy, portfolio, provider_fundamentals, recommendations, research, research_provider, reviewer, risk_validation, screening, simulated_execution, trades, universe, valuation, value_manager, value_manager_workflow
+    from agentic_portfolio_lab.domain import approval, benchmark_fulfillment, cash_events, constitution, execution_check, journal, performance, policy, portfolio, price_refresh, provider_fundamentals, recommendations, research, research_provider, reviewer, risk_validation, screening, simulated_execution, trades, universe, valuation, value_manager, value_manager_workflow
 
     modules = (
-        approval, benchmark_fulfillment, cash_events, constitution, execution_check, journal, performance, policy, portfolio,
+        approval, benchmark_fulfillment, cash_events, constitution, execution_check, journal, performance, policy, portfolio, price_refresh,
         provider_fundamentals, recommendations, research, research_provider, reviewer, risk_validation,
         screening, simulated_execution, trades, universe, valuation, value_manager, value_manager_workflow,
     )
@@ -311,6 +311,7 @@ def decode_run_state(value: Any) -> PersistedRunState:
         benchmark_history=benchmark_history,
         funding_results=state.funding_results,
         price_observations=observations,
+        latest_price_refresh_operation=getattr(state, "latest_price_refresh_operation", None),
         research_batches=state.research_batches,
         journal_entries=tuple(canonical_journals),
         approvals=approvals,

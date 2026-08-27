@@ -11,6 +11,7 @@ const {
   normalizeResearch,
   normalizeHistory,
   normalizePriceRefresh,
+  normalizePriceRefreshStatus,
   normalizeBuildResearch,
   normalizeBootstrapOverview,
   refreshPrices,
@@ -155,6 +156,7 @@ const renderDecisionCenter = async (rawDecision, label) => {
       "/portfolio": portfolio(),
       "/performance": dashboard().performance,
     };
+    if (path === "/price-refresh/latest") return { status: 404, ok: false, json: async () => null };
     return { status: 200, ok: true, json: async () => payloads[path] };
   };
   const renderModule = await import(`./app.js?decision-center=${label}`);
@@ -290,6 +292,10 @@ assert.equal(refreshButton.textContent, "Refresh prices");
 assert.match(refreshStatus.textContent, /Prices refreshed from twelve-data/);
 assert.match(refreshStatus.textContent, /twelve-data-quote-close-field/);
 
+const completedRefreshStatus = normalizePriceRefreshStatus({ operation_id: "operation-1", status: "COMPLETED", started_at: "2026-08-13T19:00:00+00:00", completed_at: "2026-08-13T20:01:00+00:00", provider_identity: "twelve-data", expected_security_count: 31, persisted_observation_count: 31, latest_source_timestamp: "2026-08-13T20:00:00+00:00", failure_code: null, failure_message: null, reported_at: "2026-08-13T20:12:00+00:00", freshness_seconds: 720 });
+assert.equal(completedRefreshStatus.status, "COMPLETED");
+assert.equal(completedRefreshStatus.freshnessSeconds, 720);
+
 const failingButton = { disabled: false, textContent: "Refresh prices" };
 const failingStatus = { textContent: "" };
 let failedReloadCount = 0;
@@ -300,6 +306,20 @@ assert.equal(failingButton.disabled, false);
 assert.equal(failingButton.textContent, "Refresh prices");
 assert.equal(failingStatus.textContent, "Price refresh failed: provider unavailable");
 assert.doesNotMatch(failingStatus.textContent, /Prices refreshed/);
+
+const disconnectedButton = { disabled: false, textContent: "Refresh prices" };
+const disconnectedStatus = { textContent: "" };
+globalThis.fetch = async () => { throw new TypeError("network lost"); };
+await refreshPrices({ button: disconnectedButton, status: disconnectedStatus, reload: async () => { throw new ApiError(0, "offline"); } });
+assert.match(disconnectedStatus.textContent, /connection lost/i);
+assert.doesNotMatch(disconnectedStatus.textContent, /Price refresh failed/i);
+
+const recoveredButton = { disabled: false, textContent: "Refresh prices" };
+const recoveredStatus = { textContent: "" };
+globalThis.fetch = async () => { throw new TypeError("network lost"); };
+await refreshPrices({ button: recoveredButton, status: recoveredStatus, reload: async () => { recoveredStatus.textContent = "Prices refreshed 12 minutes ago · authoritative durable status."; } });
+assert.match(recoveredStatus.textContent, /authoritative durable status/);
+assert.doesNotMatch(recoveredStatus.textContent, /connection lost/i);
 
 const buildButton = { disabled: false, textContent: "Build research" }, buildStatus = { textContent: "" }, pendingBuild = deferred();
 let buildReloads = 0;
@@ -426,7 +446,7 @@ delete globalThis.document;
 const originalFetch = globalThis.fetch;
 globalThis.fetch = async (url) => {
   const path = new URL(url).pathname;
-  if (path === "/decisions/latest" || path === "/research/latest") return { status: 404, ok: false };
+  if (path === "/decisions/latest" || path === "/research/latest" || path === "/price-refresh/latest") return { status: 404, ok: false };
   const payloads = {
     "/health": { status: "ok", state_mode: "synthetic-in-memory", persisted: false, synthetic: true },
     "/dashboard": dashboard(),

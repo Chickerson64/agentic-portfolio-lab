@@ -90,6 +90,10 @@ class TwelveDataMarketPriceProvider:
         self._pace = pace_seconds
         self._has_requested = False
 
+    @property
+    def provider_identity(self) -> str:
+        return "twelve-data"
+
     def get_observation(self, security: SecurityIdentity) -> PriceObservation:
         api_key = self._api_key or os.environ.get("TWELVE_DATA_API_KEY")
         if not api_key or not api_key.strip():

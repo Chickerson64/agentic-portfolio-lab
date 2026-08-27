@@ -7,7 +7,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request
 
-from agentic_portfolio_lab.application.refresh_prices import RefreshPricesService
+from agentic_portfolio_lab.application.refresh_prices import PriceRefreshConflict, RefreshPricesService
 from agentic_portfolio_lab.application.build_research import BuildResearchService
 from agentic_portfolio_lab.application.bootstrap_overview import BootstrapOverviewService
 from agentic_portfolio_lab.application.wave2_commands import BenchmarkFulfillmentService, CashEventService
@@ -27,6 +27,8 @@ from .models import (
     PortfolioSnapshotResponse,
     ResearchBatchResponse,
     PriceRefreshResponse,
+    PriceRefreshStatusResponse,
+    PriceRefreshRecoveryCommand,
     BuildResearchResponse,
     BootstrapOverviewResponse,
     CashEventCommand,
@@ -82,6 +84,8 @@ def create_router(
     def refresh_prices() -> PriceRefreshResponse:
         try:
             result = refresh_service.refresh(service().held_securities())
+        except PriceRefreshConflict as error:
+            raise HTTPException(status_code=409, detail={"code": "price_refresh_in_progress", "message": str(error)}) from error
         except MarketPriceConfigurationError as error:
             raise HTTPException(status_code=503, detail={"code": "market_price_configuration", "message": str(error)}) from error
         except MarketPriceError as error:
@@ -94,6 +98,18 @@ def create_router(
             latest_source_timestamp=result.latest_source_timestamp.isoformat(),
             price_convention=result.observations[0].price_convention,
         )
+
+    @router.get("/price-refresh/latest", response_model=PriceRefreshStatusResponse)
+    def latest_price_refresh() -> PriceRefreshStatusResponse:
+        return _query_or_unavailable(service().latest_price_refresh)
+
+    @router.post("/commands/recover-price-refresh", response_model=PriceRefreshStatusResponse)
+    def recover_price_refresh(command: PriceRefreshRecoveryCommand) -> PriceRefreshStatusResponse:
+        try:
+            refresh_service.recover_interrupted(command.operation_id)
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail={"code": "price_refresh_recovery_unavailable", "message": str(error)}) from error
+        return _query_or_unavailable(service().latest_price_refresh)
 
     @router.post("/commands/build-research", response_model=BuildResearchResponse)
     def build_research() -> BuildResearchResponse:
