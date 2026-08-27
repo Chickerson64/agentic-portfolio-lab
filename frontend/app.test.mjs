@@ -89,6 +89,23 @@ assert.equal(typeof dashboardView.portfolio.totalValue, "string");
 assert.equal(dashboardView.benchmark.security.ticker, "SPY");
 assert.equal(dashboardView.performance.absoluteAlpha, "0.04");
 
+const independentlyValuedDashboard = dashboard();
+independentlyValuedDashboard.portfolio = {
+  ...independentlyValuedDashboard.portfolio,
+  as_of_timestamp: "2026-08-11T09:15:00+00:00",
+  source_provider_identity: "managed-fixture-provider",
+};
+independentlyValuedDashboard.benchmark.snapshot = {
+  ...independentlyValuedDashboard.benchmark.snapshot,
+  as_of_timestamp: "2026-08-12T15:30:00+00:00",
+  source_provider_identity: "benchmark-fixture-provider",
+};
+const independentlyValuedView = normalizeDashboard(independentlyValuedDashboard);
+assert.equal(independentlyValuedView.portfolio.asOfTimestamp, "2026-08-11T09:15:00+00:00");
+assert.equal(independentlyValuedView.portfolio.sourceProviderIdentity, "managed-fixture-provider");
+assert.equal(independentlyValuedView.benchmark.snapshot.asOfTimestamp, "2026-08-12T15:30:00+00:00");
+assert.equal(independentlyValuedView.benchmark.snapshot.sourceProviderIdentity, "benchmark-fixture-provider");
+
 const lifecycleHistory = history();
 lifecycleHistory.entries_newest_first = [
   { ...history().entries_newest_first[0], lifecycle_status: "HOLD" },
@@ -149,7 +166,7 @@ for (const reasonCode of ["HOLD", "NOT_APPROVED", "REJECTED", "VALIDATION_FAILED
 const readyDecision = normalizeDecision(decision({ action: "BUY", readiness: { executable: true, reason_code: "READY", decision_cycle_id: "cycle-1", action: "BUY", security: security(), approval_status: "APPROVED", validation_status: "PASSED" } }));
 assert.equal(isExecutionEnabled(readyDecision), true);
 
-const renderDecisionCenter = async (rawDecision, label) => {
+const renderDecisionCenter = async (rawDecision, label, dashboardPayload = dashboard()) => {
   const targets = Object.fromEntries(["#app", "#overview", "#decision", "#research", "#research-document", "#portfolio", "#history", "#portfolio-name", "#health-status", "#refresh-prices", "#build-research", "#bootstrap-overview"].map((selector) => [selector, { innerHTML: "", textContent: "", addEventListener() {}, querySelectorAll() { return []; } }]));
   globalThis.document = {
     querySelector: (selector) => targets[selector] ?? null,
@@ -160,7 +177,7 @@ const renderDecisionCenter = async (rawDecision, label) => {
     const path = new URL(url).pathname;
     const payloads = {
       "/health": { status: "ok", state_mode: "sqlite", persisted: true, synthetic: false },
-      "/dashboard": { ...dashboard(), latest_decision: rawDecision },
+      "/dashboard": { ...dashboardPayload, latest_decision: rawDecision },
       "/decisions/latest": rawDecision,
       "/research/latest": research(),
       "/decisions": history(),
@@ -184,6 +201,18 @@ assert.match(currentNoFindingMarkup, /No Manager Risk advisory findings were rec
 assert.match(currentNoFindingMarkup, /Recorded yes/);
 assert.match(currentNoFindingMarkup, /Ready for paper execution/);
 assert.match(currentNoFindingMarkup, /<span>Target weight<\/span><strong>25\.00%<\/strong>/);
+
+await renderDecisionCenter(decision(), "independent-holdings-valuations", independentlyValuedDashboard);
+const portfolioMarkup = globalThis.document.querySelector("#portfolio").innerHTML;
+const holdingGroups = portfolioMarkup.match(/<article class="surface holding-group[^>]*>[\s\S]*?<\/article>/g) ?? [];
+const holdingMarkup = (ownerLabel) => holdingGroups.find((markup) => markup.includes(`<h2>${ownerLabel}</h2>`)) ?? "";
+const managedHoldingsMarkup = holdingMarkup("Managed Value");
+const benchmarkHoldingsMarkup = holdingMarkup("SPY Benchmark");
+assert.match(managedHoldingsMarkup, new RegExp(`Valued ${new Date("2026-08-11T09:15:00+00:00").toLocaleString()} · Provider managed-fixture-provider`));
+assert.match(benchmarkHoldingsMarkup, new RegExp(`Valued ${new Date("2026-08-12T15:30:00+00:00").toLocaleString()} · Provider benchmark-fixture-provider`));
+assert.doesNotMatch(managedHoldingsMarkup, /benchmark-fixture-provider/);
+assert.doesNotMatch(benchmarkHoldingsMarkup, /managed-fixture-provider/);
+assert.equal((portfolioMarkup.match(/Valued /g) ?? []).length, 2);
 
 const legacyMarkup = await renderDecisionCenter({
   ...decision({ action: "BUY" }),

@@ -215,7 +215,8 @@ main { width:min(1480px,100%); margin:0 auto; padding:34px 38px 60px; }
 .owner-identity small { display:block; max-width:500px; overflow:hidden; color:var(--faint); font:8px ui-monospace,monospace; text-overflow:ellipsis; white-space:nowrap; }
 .owner-total { display:grid; justify-items:end; gap:4px; text-align:right; }
 .owner-total strong { font-size:17px; font-weight:590; }
-.owner-total small { color:var(--muted); font-size:9px; text-transform:capitalize; }
+.owner-total small { color:var(--muted); font-size:9px; }
+.owner-total small:last-child { text-transform:capitalize; }
 .ownership-chip { padding:4px 7px; color:var(--accent-dark); background:var(--accent-soft); border:1px solid #d4d8fa; border-radius:5px; font-size:8px; font-weight:800; letter-spacing:.07em; }
 .benchmark-owned .ownership-chip { color:#28677a; background:#e4f2f4; border-color:#cce4e8; }
 .owned-security { display:flex; align-items:center; gap:9px; }
