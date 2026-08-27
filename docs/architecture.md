@@ -87,9 +87,9 @@ The manager's proposed `target_weight` is immutable. Validation either accepts
 that exact weight or records a failure; it never silently resizes it. Only a
 passing weight is converted deterministically to dollars and quantity.
 
-The current v0.1 runtime implements the mechanical system-safety subset. It
-does **not** yet load Manager Risk Constitutions or produce advisory strategy
-assessments. ADR-008 locks the target architecture; later lanes implement it.
+The current v0.1 runtime loads the active System Safety and Manager Risk
+Constitutions for new decision cycles and persists their two-layer evaluation.
+System Safety is hard; Manager Risk remains advisory.
 
 Policy selection is keyed by exact managed portfolio identity plus manager
 type and configured constitution versions/hashes. There is no implicit latest
@@ -100,9 +100,9 @@ before manager invocation.
 
 Critiques reasoning, evidence quality, hallucinations, methodology drift, and
 whether concentration or turnover is justified under the selected manager's
-own risk personality. It runs only after System Safety passes. Adverse findings
-remain advisory in paper trading and require durable human rationale when
-approval proceeds despite them. No AI Reviewer adapter exists in v0.1.
+own risk personality. It runs only after System Safety passes, is explicitly
+operator-invoked, and persists one immutable result per decision cycle. Adverse
+findings remain advisory in paper trading; human approval remains separate.
 
 ### Human approval layer
 
@@ -200,5 +200,5 @@ their migration/restart tests are integrated. Until then, new cycles continue
 to use current v0.1 behavior; after activation, new cycles require current
 policy references and cannot create legacy references.
 
-Not in v0.1: additional managers, an AI reviewer adapter, brokerage
+Not in v0.1: additional managers, brokerage
 integration, scheduling, authentication, and cloud persistence.

@@ -14,7 +14,9 @@ from agentic_portfolio_lab.application.build_research import BuildResearchServic
 from agentic_portfolio_lab.application.bootstrap_overview import BootstrapOverviewService
 from agentic_portfolio_lab.infrastructure.alpha_vantage import AlphaVantageResearchProvider
 from agentic_portfolio_lab.application.wave2_commands import BenchmarkFulfillmentService, CashEventService
-from agentic_portfolio_lab.application.decision_commands import DecisionApprovalService, RunValueManagerService, ReviseDecisionCycleService
+from agentic_portfolio_lab.application.decision_commands import DecisionApprovalService, ReviewDecisionService, RunValueManagerService, ReviseDecisionCycleService
+from agentic_portfolio_lab.domain.openai_reviewer import OpenAIReviewer
+from agentic_portfolio_lab.domain.reviewer import AIReviewer
 from agentic_portfolio_lab.domain.openai_value_manager import OpenAIValueManager
 from agentic_portfolio_lab.domain.value_manager import ValueManager
 from agentic_portfolio_lab.application.managed_execution import ManagedPaperExecutionService
@@ -36,6 +38,8 @@ def create_app(
     benchmark_fulfillment_service: BenchmarkFulfillmentService | None = None,
     value_manager: ValueManager | None = None,
     run_value_manager_service: RunValueManagerService | None = None,
+    reviewer: AIReviewer | None = None,
+    review_decision_service: ReviewDecisionService | None = None,
     decision_approval_service: DecisionApprovalService | None = None,
     managed_execution_service: ManagedPaperExecutionService | None = None,
 ) -> FastAPI:
@@ -88,6 +92,8 @@ def create_app(
             or (BenchmarkFulfillmentService(store) if store is not None else None),
             run_value_manager_service=run_value_manager_service
             or (RunValueManagerService(store, manager=value_manager or OpenAIValueManager()) if store is not None else None),
+            review_decision_service=review_decision_service
+            or (ReviewDecisionService(store, reviewer=reviewer or OpenAIReviewer()) if store is not None else None),
             decision_approval_service=decision_approval_service
             or (DecisionApprovalService(store) if store is not None else None),
             managed_execution_service=managed_execution_service

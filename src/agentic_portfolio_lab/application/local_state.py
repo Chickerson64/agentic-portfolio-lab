@@ -12,6 +12,7 @@ from agentic_portfolio_lab.domain.approval import DecisionApproval
 from agentic_portfolio_lab.domain.benchmark_fulfillment import PassiveIndexFulfillment
 from agentic_portfolio_lab.domain.cash_events import CashEvent, CashEventFundingResult
 from agentic_portfolio_lab.domain.journal import DecisionJournalEntry
+from agentic_portfolio_lab.domain.reviewer import ReviewerResult
 from agentic_portfolio_lab.domain.performance import BenchmarkPerformanceHistory, PortfolioPerformanceHistory
 from agentic_portfolio_lab.domain.provider_fundamentals import ProviderFundamentalRecord
 from agentic_portfolio_lab.domain.research import ResearchBatch
@@ -55,6 +56,7 @@ class PersistedRunState:
     latest_price_refresh_operation: PriceRefreshOperation | None = None
     research_batches: tuple[ResearchBatch, ...] = ()
     journal_entries: tuple[DecisionJournalEntry, ...] = ()
+    reviewer_results: tuple[ReviewerResult, ...] = ()
     approvals: tuple[DecisionApproval, ...] = ()
     executions: tuple[SimulatedExecutionResult, ...] = ()
     execution_checks: tuple[ExecutionSafetyCheck, ...] = ()
@@ -75,7 +77,7 @@ class PersistedRunState:
             raise TypeError("managed_history must be a PortfolioPerformanceHistory")
         if not isinstance(self.benchmark_history, BenchmarkPerformanceHistory):
             raise TypeError("benchmark_history must be a BenchmarkPerformanceHistory")
-        for name in ("funding_results", "price_observations", "research_batches", "journal_entries", "approvals", "executions", "execution_checks", "history_entries", "benchmark_fulfillments", "screening_runs", "fundamental_records"):
+        for name in ("funding_results", "price_observations", "research_batches", "journal_entries", "reviewer_results", "approvals", "executions", "execution_checks", "history_entries", "benchmark_fulfillments", "screening_runs", "fundamental_records"):
             value = getattr(self, name, ())
             if not isinstance(value, tuple):
                 raise TypeError(f"{name} must be a tuple")
@@ -211,6 +213,22 @@ class PersistedRunState:
             matching_batches = tuple(batch for batch in self.research_batches if batch.batch_id == journal.research_batch_id)
             if matching_batches and matching_batches[0] != journal.decision_result.context.research_batch:
                 raise ValueError("journal research batch must match the persisted research batch")
+        reviewer_results = {result.decision_cycle_id: result for result in self.reviewer_results}
+        if len(reviewer_results) != len(self.reviewer_results):
+            raise ValueError("reviewer_results must not contain duplicate decision cycles")
+        for result in self.reviewer_results:
+            journal = journals.get(result.decision_cycle_id)
+            if journal is None:
+                raise ValueError("reviewer result must belong to a canonical persisted journal")
+            if result.context.decision_result != journal.decision_result:
+                raise ValueError("reviewer result must retain exact journal decision lineage")
+            if result.context.risk_validation_result != journal.risk_validation_result:
+                raise ValueError("reviewer result must retain exact journal System Safety lineage")
+            if result.context.policy_reference != journal.policy_reference:
+                raise ValueError("reviewer result must retain exact journal policy lineage")
+            assessment = None if journal.two_layer_evaluation is None else journal.two_layer_evaluation.manager_assessment
+            if result.context.manager_assessment != assessment:
+                raise ValueError("reviewer result must retain exact journal Manager Risk lineage")
         approvals = {approval.decision_cycle_id: approval for approval in self.approvals}
         if len(approvals) != len(self.approvals):
             raise ValueError("approvals must not contain duplicate decision cycles")

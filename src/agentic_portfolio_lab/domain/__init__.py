@@ -110,6 +110,7 @@ from .reviewer import (
     ReviewFinding,
     ReviewFindingCategory,
     ReviewFindingSeverity,
+    ReviewerMetadata,
     ReviewerResult,
 )
 from .trades import (
@@ -203,6 +204,7 @@ __all__ = [
     "ReviewFinding",
     "ReviewFindingCategory",
     "ReviewFindingSeverity",
+    "ReviewerMetadata",
     "ReviewerResult",
     "RecommendationAction",
     "RecommendationEvidenceReference",

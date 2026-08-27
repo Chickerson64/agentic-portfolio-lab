@@ -10,11 +10,12 @@ from agentic_portfolio_lab.dashboard import DecisionHistoryArtifacts
 from agentic_portfolio_lab.domain.approval import ApprovalDecision, DecisionApproval
 from agentic_portfolio_lab.domain.constitution import ConstitutionLoader
 from agentic_portfolio_lab.domain.journal import DecisionJournalEntry
-from agentic_portfolio_lab.domain.policy import EvidenceCoverageAssessment, RiskEvaluationSnapshot
+from agentic_portfolio_lab.domain.policy import CurrentPolicyReference, EvidenceCoverageAssessment, RiskEvaluationSnapshot
 from agentic_portfolio_lab.domain.portfolio import SecurityIdentity, _require_aware_datetime
 from agentic_portfolio_lab.domain.recommendations import RecommendationAction
 from agentic_portfolio_lab.domain.research import MissingData, ResearchBatch, ResearchPacket
 from agentic_portfolio_lab.domain.risk_validation import TwoLayerRiskEvaluator
+from agentic_portfolio_lab.domain.reviewer import AIReviewer, AIReviewerReviewContext, ReviewerResult
 from agentic_portfolio_lab.domain.valuation import PortfolioValuation, PriceObservation
 from agentic_portfolio_lab.domain.value_manager import ValueManager, ValueManagerDecisionContext
 from agentic_portfolio_lab.domain.value_manager_workflow import ValueManagerDecisionWorkflow
@@ -83,6 +84,53 @@ class RunValueManagerService:
         )
         self._store.save_transition(replace(state, journal_entries=(*state.journal_entries, journal)))
         return RunValueManagerResult(journal)
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewDecisionResult:
+    reviewer_result: ReviewerResult
+
+
+class ReviewDecisionService:
+    """Append one advisory AI review to an exact, already-journaled decision."""
+
+    def __init__(self, store, *, reviewer: AIReviewer) -> None:
+        if not isinstance(reviewer, AIReviewer) or not callable(getattr(reviewer, "review", None)):
+            raise TypeError("reviewer must implement AIReviewer")
+        self._store = store
+        self._reviewer = reviewer
+
+    def review(self, *, decision_cycle_id: UUID) -> ReviewDecisionResult:
+        if not isinstance(decision_cycle_id, UUID):
+            raise TypeError("decision_cycle_id must be a UUID")
+        state = _require_state(self._store)
+        journal = next((item for item in state.journal_entries if item.decision_cycle_id == decision_cycle_id), None)
+        if journal is None:
+            raise ValueError("no canonical persisted journal exists for decision_cycle_id")
+        if not journal.risk_validation_result.passed:
+            raise DecisionCommandConflict("System Safety must pass before AI review")
+        if journal.two_layer_evaluation is None or journal.two_layer_evaluation.manager_assessment is None:
+            raise DecisionCommandConflict("current Manager Risk assessment is required before AI review")
+        if not isinstance(journal.policy_reference, CurrentPolicyReference):
+            raise DecisionCommandConflict("current policy lineage is required before AI review")
+        if any(item.decision_cycle_id == decision_cycle_id for item in state.reviewer_results):
+            raise DecisionCommandConflict("decision_cycle_id already has an immutable reviewer result")
+        context = AIReviewerReviewContext(
+            decision_result=journal.decision_result,
+            risk_validation_result=journal.risk_validation_result,
+            constitution=journal.decision_result.context.constitution,
+            policy_reference=journal.policy_reference,
+            manager_assessment=journal.two_layer_evaluation.manager_assessment,
+        )
+        result = self._reviewer.review(context)
+        if not isinstance(result, ReviewerResult):
+            raise TypeError("reviewer must return a ReviewerResult")
+        if result.context != context:
+            raise ValueError("reviewer result must retain the exact supplied decision lineage")
+        if result.metadata is None:
+            raise ValueError("production reviewer result requires reviewer metadata")
+        self._store.save_transition(replace(state, reviewer_results=(*state.reviewer_results, result)))
+        return ReviewDecisionResult(result)
 
 
 class DecisionApprovalService:

@@ -11,6 +11,7 @@ from agentic_portfolio_lab.dashboard import DashboardView, DecisionHistoryArtifa
 from agentic_portfolio_lab.dashboard_demo import DashboardDemoData
 from agentic_portfolio_lab.domain.approval import DecisionApproval
 from agentic_portfolio_lab.domain.journal import DecisionJournalEntry
+from agentic_portfolio_lab.domain.reviewer import ReviewerResult
 from agentic_portfolio_lab.domain.performance import BenchmarkPerformanceHistory, PerformanceComparison, PortfolioPerformanceHistory
 from agentic_portfolio_lab.domain.portfolio import SecurityIdentity
 from agentic_portfolio_lab.domain.benchmark_fulfillment import PassiveIndexFulfillment
@@ -64,6 +65,7 @@ class MvpReadStateSnapshot:
     benchmark_fulfillment_status: str = "PENDING_NO_ELIGIBLE_PRICE"
     price_observations: tuple[PriceObservation, ...] = ()
     latest_price_refresh_operation: object | None = None
+    reviewer_results: tuple[ReviewerResult, ...] = ()
 
     @classmethod
     def from_dashboard_demo(cls, data: DashboardDemoData) -> "MvpReadStateSnapshot":
@@ -100,6 +102,7 @@ class MvpReadState(Protocol):
     benchmark_fulfillments: tuple[PassiveIndexFulfillment, ...]
     price_observations: tuple[PriceObservation, ...]
     latest_price_refresh_operation: object | None
+    reviewer_results: tuple[ReviewerResult, ...]
 
 
 class LatestResourceNotFound(ValueError):
@@ -132,6 +135,7 @@ class MvpQueryService:
             journal_entry=self._state.latest_journal_entry,
             approval=self._state.latest_approval,
             history_entries=self._state.history_entries,
+            reviewer_results=getattr(self._state, "reviewer_results", ()),
         )
 
     def health(self) -> HealthResponse:
@@ -201,7 +205,7 @@ class MvpQueryService:
             journal,
             approval,
             self._execution_for_journal(journal),
-            price_observations=self._state.price_observations,
+            price_observations=self._state.price_observations, reviewer_result=self._reviewer_for(journal),
         )
 
     def decision_for_approval(self, decision_cycle_id: UUID) -> DecisionMemoResponse:
@@ -218,8 +222,14 @@ class MvpQueryService:
             artifact.journal_entry,
             artifact.approval,
             artifact.executed_trade,
-            price_observations=self._state.price_observations,
+            price_observations=self._state.price_observations, reviewer_result=self._reviewer_for(artifact.journal_entry),
         )
+
+    def _reviewer_for(self, journal: DecisionJournalEntry) -> ReviewerResult | None:
+        matches = tuple(item for item in getattr(self._state, "reviewer_results", ()) if item.decision_cycle_id == journal.decision_cycle_id)
+        if len(matches) > 1:
+            raise ValueError("decision cycle has ambiguous reviewer artifacts")
+        return matches[0] if matches else None
 
     def _screening_run_for(self, batch: ResearchBatch) -> ScreeningRun | None:
         if batch.screening_run_id is None:

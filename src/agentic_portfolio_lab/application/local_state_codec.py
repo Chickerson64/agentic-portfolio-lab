@@ -218,6 +218,23 @@ def decode_run_state(value: Any) -> PersistedRunState:
             two_layer_evaluation=two_layer_evaluation,
         ))
     journals = {journal.decision_cycle_id: journal for journal in canonical_journals}
+    canonical_reviewer_results = tuple(
+        ReviewerResult(
+            context=AIReviewerReviewContext(
+                decision_result=journals[item.decision_cycle_id].decision_result,
+                risk_validation_result=journals[item.decision_cycle_id].risk_validation_result,
+                constitution=item.context.constitution,
+                policy_reference=item.context.policy_reference,
+                manager_assessment=item.context.manager_assessment,
+            ),
+            decision=item.decision,
+            findings=item.findings,
+            reviewed_at=item.reviewed_at,
+            metadata=item.metadata,
+            rationale=item.rationale,
+        )
+        for item in getattr(state, "reviewer_results", ())
+    )
     approvals = tuple(
         DecisionApproval(
             journal_entry=journals[approval.decision_cycle_id],
@@ -314,6 +331,7 @@ def decode_run_state(value: Any) -> PersistedRunState:
         latest_price_refresh_operation=getattr(state, "latest_price_refresh_operation", None),
         research_batches=state.research_batches,
         journal_entries=tuple(canonical_journals),
+        reviewer_results=canonical_reviewer_results,
         approvals=approvals,
         executions=executions,
         execution_checks=execution_checks,

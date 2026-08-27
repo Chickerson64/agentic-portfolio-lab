@@ -9,6 +9,8 @@ from typing import Protocol, runtime_checkable
 from uuid import UUID
 
 from .constitution import ValueManagerConstitution
+from .policy import CurrentPolicyReference
+from .risk_validation import ManagerConstitutionAssessment
 from .portfolio import _canonical_upper_text, _require_aware_datetime, _require_non_empty_text
 from .risk_validation import RiskValidationResult
 from .value_manager_workflow import ValueManagerDecisionResult
@@ -77,6 +79,7 @@ class ReviewFinding:
     message: str
     related_evidence_ids: tuple[str, ...] | list[str] = ()
     related_recommendation_field: str | None = None
+    what_would_change: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -100,6 +103,32 @@ class ReviewFinding:
                     field_name="related_recommendation_field",
                 ).strip(),
             )
+        if self.what_would_change is not None:
+            object.__setattr__(
+                self,
+                "what_would_change",
+                _require_non_empty_text(self.what_would_change, field_name="what_would_change").strip(),
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewerMetadata:
+    """Provider identity retained with an immutable reviewer artifact."""
+
+    reviewer_id: str
+    reviewer_version: str
+    provider: str
+    model: str
+    response_id: str | None = None
+    request_id: str | None = None
+
+    def __post_init__(self) -> None:
+        for field_name in ("reviewer_id", "reviewer_version", "provider", "model"):
+            object.__setattr__(self, field_name, _require_non_empty_text(getattr(self, field_name), field_name=field_name).strip())
+        for field_name in ("response_id", "request_id"):
+            value = getattr(self, field_name)
+            if value is not None:
+                object.__setattr__(self, field_name, _require_non_empty_text(value, field_name=field_name).strip())
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,6 +144,8 @@ class AIReviewerReviewContext:
     decision_result: ValueManagerDecisionResult
     risk_validation_result: RiskValidationResult
     constitution: ValueManagerConstitution
+    policy_reference: CurrentPolicyReference | None = None
+    manager_assessment: ManagerConstitutionAssessment | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.decision_result, ValueManagerDecisionResult):
@@ -129,6 +160,18 @@ class AIReviewerReviewContext:
             raise TypeError("constitution must be a ValueManagerConstitution")
         if self.decision_result.context.constitution != self.constitution:
             raise ValueError("constitution must match the decision_result constitution")
+        if self.policy_reference is not None:
+            if not isinstance(self.policy_reference, CurrentPolicyReference):
+                raise TypeError("policy_reference must be a CurrentPolicyReference or None")
+            if self.policy_reference.investment_constitution.constitution_version != self.constitution.constitution_version:
+                raise ValueError("policy_reference must match constitution")
+        if self.manager_assessment is not None:
+            if not isinstance(self.manager_assessment, ManagerConstitutionAssessment):
+                raise TypeError("manager_assessment must be a ManagerConstitutionAssessment or None")
+            if self.manager_assessment.decision_result != self.decision_result:
+                raise ValueError("manager_assessment must belong to decision_result")
+            if self.policy_reference is not None and self.manager_assessment.manager_risk_constitution != self.policy_reference.manager_risk_constitution:
+                raise ValueError("manager_assessment must match policy_reference")
 
     @property
     def decision_cycle_id(self) -> UUID:
@@ -174,6 +217,8 @@ class ReviewerResult:
     decision: ReviewDecision | str
     findings: tuple[ReviewFinding, ...] | list[ReviewFinding]
     reviewed_at: datetime
+    metadata: ReviewerMetadata | None = None
+    rationale: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.context, AIReviewerReviewContext):
@@ -194,6 +239,10 @@ class ReviewerResult:
         if reviewed_at < self.context.risk_validation_result.validation_timestamp:
             raise ValueError("reviewed_at must not precede risk validation_timestamp")
         _verify_related_evidence(self.context, findings)
+        if self.metadata is not None and not isinstance(self.metadata, ReviewerMetadata):
+            raise TypeError("metadata must be a ReviewerMetadata or None")
+        if self.rationale is not None:
+            object.__setattr__(self, "rationale", _require_non_empty_text(self.rationale, field_name="rationale").strip())
         object.__setattr__(self, "decision", decision)
         object.__setattr__(self, "findings", findings)
         object.__setattr__(self, "reviewed_at", reviewed_at)

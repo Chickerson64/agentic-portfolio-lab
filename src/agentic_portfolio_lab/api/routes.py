@@ -11,7 +11,7 @@ from agentic_portfolio_lab.application.refresh_prices import PriceRefreshConflic
 from agentic_portfolio_lab.application.build_research import BuildResearchService
 from agentic_portfolio_lab.application.bootstrap_overview import BootstrapOverviewService
 from agentic_portfolio_lab.application.wave2_commands import BenchmarkFulfillmentService, CashEventService
-from agentic_portfolio_lab.application.decision_commands import DecisionApprovalService, DecisionCommandConflict, RunValueManagerService, ReviseDecisionCycleService
+from agentic_portfolio_lab.application.decision_commands import DecisionApprovalService, DecisionCommandConflict, ReviewDecisionService, RunValueManagerService, ReviseDecisionCycleService
 from agentic_portfolio_lab.domain.approval import ApprovalDecision
 from agentic_portfolio_lab.application.managed_execution import ManagedPaperExecutionError, ManagedPaperExecutionService
 from agentic_portfolio_lab.domain.market_prices import MarketPriceConfigurationError, MarketPriceError
@@ -65,6 +65,7 @@ def create_router(
     cash_event_service: CashEventService | None = None,
     benchmark_fulfillment_service: BenchmarkFulfillmentService | None = None,
     run_value_manager_service: RunValueManagerService | None = None,
+    review_decision_service: ReviewDecisionService | None = None,
     decision_approval_service: DecisionApprovalService | None = None,
     managed_execution_service: ManagedPaperExecutionService | None = None,
     revision_service: ReviseDecisionCycleService | None = None,
@@ -183,6 +184,20 @@ def create_router(
             raise HTTPException(status_code=502, detail={"code": "value_manager_unavailable", "message": str(error)}) from error
         except (TypeError, ValueError) as error:
             raise HTTPException(status_code=422, detail={"code": "value_manager_invalid", "message": str(error)}) from error
+        return _query_or_unavailable(service().latest_decision)
+
+    @router.post("/commands/decisions/{decision_cycle_id}/review", response_model=DecisionMemoResponse)
+    def review_decision(decision_cycle_id: UUID) -> DecisionMemoResponse:
+        if review_decision_service is None:
+            raise HTTPException(status_code=503, detail={"code": "durable_state_required", "message": "AI review requires configured local SQLite state"})
+        try:
+            result = review_decision_service.review(decision_cycle_id=decision_cycle_id)
+        except DecisionCommandConflict as error:
+            raise HTTPException(status_code=409, detail={"code": "decision_conflict", "message": str(error)}) from error
+        except RuntimeError as error:
+            raise HTTPException(status_code=502, detail={"code": "reviewer_unavailable", "message": str(error)}) from error
+        except (TypeError, ValueError) as error:
+            raise HTTPException(status_code=422, detail={"code": "reviewer_invalid", "message": str(error)}) from error
         return _query_or_unavailable(service().latest_decision)
 
     def _record_human_decision(

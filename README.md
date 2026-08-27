@@ -44,7 +44,6 @@ trades. There is no autonomous execution.
 
 ## Not implemented / future work
 
-- an AI reviewer adapter;
 - SELL, rebalance, or additional AI managers;
 - brokerage integration or real-money execution;
 - autonomous execution, scheduling, or authentication;

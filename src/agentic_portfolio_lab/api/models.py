@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict
 from agentic_portfolio_lab.dashboard import DecisionHistoryArtifacts, HistoryPanel
 from agentic_portfolio_lab.domain.approval import DecisionApproval
 from agentic_portfolio_lab.domain.journal import DecisionJournalEntry
+from agentic_portfolio_lab.domain.reviewer import ReviewerResult
 from agentic_portfolio_lab.domain.policy import CurrentPolicyReference
 from agentic_portfolio_lab.domain.performance import PerformanceComparison, PerformanceSnapshot
 from agentic_portfolio_lab.domain.portfolio import SecurityIdentity
@@ -156,11 +157,17 @@ class ReviewerFindingResponse(ApiModel):
     message: str
     related_evidence_ids: tuple[str, ...]
     related_recommendation_field: str | None
+    what_would_change: str | None
 
 
 class ReviewerResponse(ApiModel):
     decision: str
     reviewed_at: str
+    reviewer_id: str | None
+    reviewer_version: str | None
+    provider: str | None
+    model: str | None
+    rationale: str | None
     findings: tuple[ReviewerFindingResponse, ...]
 
 
@@ -527,13 +534,18 @@ def _recommendation_response(journal: DecisionJournalEntry) -> RecommendationRes
     )
 
 
-def _reviewer_response(journal: DecisionJournalEntry) -> ReviewerResponse | None:
-    reviewer = journal.reviewer_result
+def _reviewer_response(journal: DecisionJournalEntry, reviewer: ReviewerResult | None = None) -> ReviewerResponse | None:
+    reviewer = journal.reviewer_result if reviewer is None else reviewer
     if reviewer is None:
         return None
     return ReviewerResponse(
         decision=reviewer.decision.value,
         reviewed_at=_timestamp(reviewer.reviewed_at),
+        reviewer_id=None if reviewer.metadata is None else reviewer.metadata.reviewer_id,
+        reviewer_version=None if reviewer.metadata is None else reviewer.metadata.reviewer_version,
+        provider=None if reviewer.metadata is None else reviewer.metadata.provider,
+        model=None if reviewer.metadata is None else reviewer.metadata.model,
+        rationale=reviewer.rationale,
         findings=tuple(
             ReviewerFindingResponse(
                 severity=finding.severity.value,
@@ -541,6 +553,7 @@ def _reviewer_response(journal: DecisionJournalEntry) -> ReviewerResponse | None
                 message=finding.message,
                 related_evidence_ids=tuple(finding.related_evidence_ids),
                 related_recommendation_field=finding.related_recommendation_field,
+                what_would_change=finding.what_would_change,
             )
             for finding in reviewer.findings
         ),
@@ -626,6 +639,7 @@ def decision_memo_response(
     executed_trade: ExecutedTrade | None,
     *,
     price_observations: tuple[PriceObservation, ...],
+    reviewer_result: ReviewerResult | None = None,
 ) -> DecisionMemoResponse:
     validation = journal.risk_validation_result
     return DecisionMemoResponse(
@@ -656,7 +670,7 @@ def decision_memo_response(
             validated_trade_id=None if validation.validated_trade is None else str(validation.validated_trade.validated_trade_id),
         ),
         policy_evaluation=_policy_evaluation_response(journal),
-        reviewer=_reviewer_response(journal),
+        reviewer=_reviewer_response(journal, reviewer_result),
         approval=_approval_response(approval),
         execution=execution_response(executed_trade),
         execution_readiness=execution_readiness_response(

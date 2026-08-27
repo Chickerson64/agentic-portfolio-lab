@@ -20,7 +20,7 @@ from .domain.portfolio import Portfolio, Position, SecurityIdentity
 from .domain.recommendations import PortfolioRecommendation
 from .domain.research import MissingData, ResearchBatch, ResearchPacket, ResearchSection
 from .domain.risk_validation import RiskRuleResult
-from .domain.reviewer import ReviewFinding
+from .domain.reviewer import ReviewFinding, ReviewerResult
 from .domain.trades import ExecutedTrade
 from .domain.valuation import PortfolioValuation, PositionValuation
 
@@ -632,6 +632,7 @@ def _history_entry_panel(
     managed_history: PortfolioPerformanceHistory,
     benchmark_history: BenchmarkPerformanceHistory,
     comparison_available: bool = True,
+    reviewer_result: ReviewerResult | None = None,
 ) -> HistoryEntryPanel:
     journal_entry = artifacts.journal_entry
     decision_result = journal_entry.decision_result
@@ -669,7 +670,8 @@ def _history_entry_panel(
         packet for packet in research_batch.packets if packet.ticker == recommendation.ticker
     )
     research_packet_id = matching_packets[0].packet_id if len(matching_packets) == 1 else None
-    reviewer_outcome = "Not reviewed" if journal_entry.reviewer_result is None else journal_entry.reviewer_result.decision.value
+    effective_reviewer = journal_entry.reviewer_result if reviewer_result is None else reviewer_result
+    reviewer_outcome = "Not reviewed" if effective_reviewer is None else effective_reviewer.decision.value
     approval_outcome = "No approval recorded" if artifacts.approval is None else artifacts.approval.decision.value
     ticker = _format_ticker(recommendation)
     action = recommendation.action.value
@@ -708,6 +710,7 @@ def _history_panel(
     managed_history: PortfolioPerformanceHistory,
     benchmark_history: BenchmarkPerformanceHistory,
     comparison_available: bool = True,
+    reviewer_results: dict[UUID, ReviewerResult] | None = None,
 ) -> HistoryPanel:
     if not isinstance(history_entries, (tuple, list)):
         raise TypeError("history_entries must be a tuple or list of DecisionHistoryArtifacts")
@@ -718,7 +721,11 @@ def _history_panel(
     if len(set(entry_ids)) != len(entry_ids):
         raise ValueError("history_entries must not contain duplicate journal identities")
     panels = tuple(
-        _history_entry_panel(entry, managed_history=managed_history, benchmark_history=benchmark_history, comparison_available=comparison_available)
+        _history_entry_panel(
+            entry, managed_history=managed_history, benchmark_history=benchmark_history,
+            comparison_available=comparison_available,
+            reviewer_result=None if reviewer_results is None else reviewer_results.get(entry.journal_entry.decision_cycle_id),
+        )
         for entry in entries
     )
     newest_first = _newest_first_history_panels(panels)
@@ -744,6 +751,7 @@ def _decision_panel(
     *,
     journal_entry: DecisionJournalEntry | None = None,
     approval: DecisionApproval | None = None,
+    reviewer_result: ReviewerResult | None = None,
 ) -> LatestDecisionPanel | None:
     if journal_entry is None and approval is None:
         return None
@@ -754,7 +762,7 @@ def _decision_panel(
     decision_result = source.decision_result
     recommendation = decision_result.recommendation
     risk_validation = source.risk_validation_result
-    reviewer_result = source.reviewer_result
+    reviewer_result = source.reviewer_result if reviewer_result is None else reviewer_result
 
     summary = DecisionSummaryPanel(
         action=recommendation.action.value,
@@ -808,6 +816,7 @@ def build_dashboard_view(
     approval: DecisionApproval | None = None,
     research_batch: ResearchBatch | None = None,
     history_entries: tuple[DecisionHistoryArtifacts, ...] | list[DecisionHistoryArtifacts] = (),
+    reviewer_results: tuple[ReviewerResult, ...] | list[ReviewerResult] = (),
 ) -> DashboardView:
     """Transform immutable domain objects into a compact dashboard view model."""
     if not managed_history.snapshots:
@@ -832,7 +841,14 @@ def build_dashboard_view(
     managed_panel = _portfolio_panel(managed_snapshot.portfolio, managed_snapshot.valuation)
     benchmark_panel = _benchmark_panel(benchmark_snapshot.portfolio, benchmark_snapshot.valuation)
     comparison_panel = None if derived_comparison is None else _comparison_panel(derived_comparison)
-    decision_panel = _decision_panel(journal_entry=journal_entry, approval=approval)
+    reviewer_by_cycle = {item.decision_cycle_id: item for item in reviewer_results}
+    if len(reviewer_by_cycle) != len(reviewer_results):
+        raise ValueError("reviewer_results must not contain duplicate decision cycles")
+    decision_cycle_id = None if journal_entry is None else journal_entry.decision_cycle_id
+    decision_panel = _decision_panel(
+        journal_entry=journal_entry, approval=approval,
+        reviewer_result=None if decision_cycle_id is None else reviewer_by_cycle.get(decision_cycle_id),
+    )
     journal_source = approval.journal_entry if approval is not None else journal_entry
     if journal_source is not None:
         authoritative_research_batch = journal_source.decision_result.context.research_batch
@@ -848,7 +864,10 @@ def build_dashboard_view(
         research=None
         if authoritative_research_batch is None
         else _research_batch_panel(authoritative_research_batch, journal_entry=journal_source),
-        history=_history_panel(history_entries, managed_history=managed_history, benchmark_history=benchmark_history, comparison_available=derived_comparison is not None),
+        history=_history_panel(
+            history_entries, managed_history=managed_history, benchmark_history=benchmark_history,
+            comparison_available=derived_comparison is not None, reviewer_results=reviewer_by_cycle,
+        ),
     )
 
 

@@ -193,6 +193,12 @@ class SQLiteLocalRunStore:
             label="decision journals",
         )
         SQLiteLocalRunStore._require_immutable_records(
+            getattr(current, "reviewer_results", ()),
+            getattr(proposed, "reviewer_results", ()),
+            key=lambda result: result.decision_cycle_id,
+            label="reviewer results",
+        )
+        SQLiteLocalRunStore._require_immutable_records(
             current.approvals,
             proposed.approvals,
             key=lambda approval: approval.decision_cycle_id,
@@ -552,6 +558,7 @@ class SQLiteMvpReadState:
             benchmark_fulfillment_status=getattr(state, "benchmark_fulfillment_status", "PENDING_NO_ELIGIBLE_PRICE"),
             price_observations=state.price_observations,
             latest_price_refresh_operation=state.latest_price_refresh_operation,
+            reviewer_results=state.reviewer_results,
         )
 
     @staticmethod
