@@ -543,22 +543,87 @@ def _snapshot_index_for_decision_cycle(
     history: PortfolioPerformanceHistory,
     *,
     journal_entry: DecisionJournalEntry,
+    executed_trade: ExecutedTrade | None = None,
 ) -> int | None:
+    """Return the first lifecycle-eligible managed snapshot for one decision.
+
+    A portfolio retains its latest decision-cycle identity across later
+    mark-to-market valuations.  Those valuations are not separate decision
+    outcomes, so this helper deliberately selects the first snapshot at or
+    after the relevant lifecycle event rather than requiring a one-to-one
+    cycle-to-snapshot relationship.
+    """
     if journal_entry.portfolio_id != history.portfolio_id:
         raise ValueError("history entry journal portfolio_id must match managed performance history")
+    lifecycle_at = journal_entry.journaled_at if executed_trade is None else executed_trade.executed_at
     matching_indexes = tuple(
         index
         for index, snapshot in enumerate(history.snapshots)
         if snapshot.portfolio.decision_cycle_id == journal_entry.decision_cycle_id
+        and snapshot.timestamp >= lifecycle_at
     )
-    if len(matching_indexes) > 1:
-        raise ValueError("a decision cycle must not match multiple performance snapshots")
     if not matching_indexes:
         return None
     snapshot_index = matching_indexes[0]
     snapshot = history.snapshots[snapshot_index]
     _validate_history_snapshot_lineage(snapshot, journal_entry=journal_entry)
     return snapshot_index
+
+
+def _synchronized_snapshot_pair_for_decision_cycle(
+    managed_history: PortfolioPerformanceHistory,
+    benchmark_history: BenchmarkPerformanceHistory,
+    *,
+    journal_entry: DecisionJournalEntry,
+    executed_trade: ExecutedTrade | None,
+) -> tuple[int, int] | None:
+    """Return the first synchronized valuation pair after a decision event.
+
+    Managed execution is intentionally allowed to be unpaired.  A historical
+    performance attachment therefore starts at the first later synchronized
+    mark-to-market pair, never at an arbitrary later valuation.
+    """
+    managed_index = _snapshot_index_for_decision_cycle(
+        managed_history, journal_entry=journal_entry, executed_trade=executed_trade,
+    )
+    if managed_index is None:
+        return None
+    for index in range(managed_index, len(managed_history.snapshots)):
+        managed_snapshot = managed_history.snapshots[index]
+        if managed_snapshot.portfolio.decision_cycle_id != journal_entry.decision_cycle_id:
+            continue
+        benchmark_indexes = tuple(
+            benchmark_index
+            for benchmark_index, benchmark_snapshot in enumerate(benchmark_history.snapshots)
+            if benchmark_snapshot.timestamp == managed_snapshot.timestamp
+        )
+        if len(benchmark_indexes) > 1:
+            raise ValueError("a synchronized managed snapshot must not match multiple benchmark snapshots")
+        if benchmark_indexes:
+            _validate_history_snapshot_chronology(
+                managed_snapshot, journal_entry=journal_entry, executed_trade=executed_trade,
+            )
+            return index, benchmark_indexes[0]
+    return None
+
+
+def _synchronized_snapshot_pairs(
+    managed_history: PortfolioPerformanceHistory,
+    benchmark_history: BenchmarkPerformanceHistory,
+) -> tuple[tuple[int, int], ...]:
+    """Return every unique timestamp pair in append-only history order."""
+    pairs: list[tuple[int, int]] = []
+    for managed_index, managed_snapshot in enumerate(managed_history.snapshots):
+        benchmark_indexes = tuple(
+            benchmark_index
+            for benchmark_index, benchmark_snapshot in enumerate(benchmark_history.snapshots)
+            if benchmark_snapshot.timestamp == managed_snapshot.timestamp
+        )
+        if len(benchmark_indexes) > 1:
+            raise ValueError("a synchronized managed snapshot must not match multiple benchmark snapshots")
+        if benchmark_indexes:
+            pairs.append((managed_index, benchmark_indexes[0]))
+    return tuple(pairs)
 
 
 def _validate_history_snapshot_lineage(
@@ -617,12 +682,13 @@ def _history_prefix_comparison(
     managed_history: PortfolioPerformanceHistory,
     benchmark_history: BenchmarkPerformanceHistory,
     *,
-    snapshot_index: int,
+    managed_snapshot_index: int,
+    benchmark_snapshot_index: int,
 ) -> PerformanceComparison:
     """Reuse the domain comparison for an existing immutable history prefix."""
     return PerformanceComparison(
-        replace(managed_history, snapshots=managed_history.snapshots[: snapshot_index + 1]),
-        replace(benchmark_history, snapshots=benchmark_history.snapshots[: snapshot_index + 1]),
+        replace(managed_history, snapshots=managed_history.snapshots[: managed_snapshot_index + 1]),
+        replace(benchmark_history, snapshots=benchmark_history.snapshots[: benchmark_snapshot_index + 1]),
     )
 
 
@@ -637,24 +703,20 @@ def _history_entry_panel(
     journal_entry = artifacts.journal_entry
     decision_result = journal_entry.decision_result
     recommendation = decision_result.recommendation
-    snapshot_index = _snapshot_index_for_decision_cycle(
-        managed_history,
-        journal_entry=journal_entry,
+    snapshot_pair = _synchronized_snapshot_pair_for_decision_cycle(
+        managed_history, benchmark_history, journal_entry=journal_entry, executed_trade=artifacts.executed_trade,
     )
     snapshot = None
     contributions: tuple[HistoryContributionPanel, ...] = ()
-    if snapshot_index is not None and comparison_available:
-        managed_snapshot = managed_history.snapshots[snapshot_index]
-        benchmark_snapshot = benchmark_history.snapshots[snapshot_index]
-        _validate_history_snapshot_chronology(
-            managed_snapshot,
-            journal_entry=journal_entry,
-            executed_trade=artifacts.executed_trade,
-        )
+    if snapshot_pair is not None and comparison_available:
+        managed_snapshot_index, benchmark_snapshot_index = snapshot_pair
+        managed_snapshot = managed_history.snapshots[managed_snapshot_index]
+        benchmark_snapshot = benchmark_history.snapshots[benchmark_snapshot_index]
         comparison = _history_prefix_comparison(
             managed_history,
             benchmark_history,
-            snapshot_index=snapshot_index,
+            managed_snapshot_index=managed_snapshot_index,
+            benchmark_snapshot_index=benchmark_snapshot_index,
         )
         snapshot = _history_snapshot_panel(managed_snapshot, benchmark_snapshot, comparison)
         contributions = tuple(
@@ -729,6 +791,7 @@ def _history_panel(
         for entry in entries
     )
     newest_first = _newest_first_history_panels(panels)
+    chart_pairs = _synchronized_snapshot_pairs(managed_history, benchmark_history)
     chart_points = () if not comparison_available else tuple(
         HistoryChartPoint(
             timestamp_at=managed_snapshot.timestamp,
@@ -738,11 +801,12 @@ def _history_panel(
             benchmark_return=comparison.benchmark_cumulative_return,
             absolute_alpha=comparison.absolute_alpha,
         )
-        for index, managed_snapshot in sorted(
-            enumerate(managed_history.snapshots),
-            key=lambda item: _datetime_instant(item[1].timestamp),
-        )
-        for comparison in (_history_prefix_comparison(managed_history, benchmark_history, snapshot_index=index),)
+        for managed_index, benchmark_index in chart_pairs
+        for managed_snapshot in (managed_history.snapshots[managed_index],)
+        for comparison in (_history_prefix_comparison(
+            managed_history, benchmark_history,
+            managed_snapshot_index=managed_index, benchmark_snapshot_index=benchmark_index,
+        ),)
     )
     return HistoryPanel(entries_newest_first=newest_first, chart_points_oldest_first=chart_points)
 
