@@ -12,7 +12,7 @@ from decimal import Decimal
 from uuid import UUID
 from pydantic import BaseModel, ConfigDict
 
-from agentic_portfolio_lab.dashboard import HistoryPanel
+from agentic_portfolio_lab.dashboard import DecisionHistoryArtifacts, HistoryPanel
 from agentic_portfolio_lab.domain.approval import DecisionApproval
 from agentic_portfolio_lab.domain.journal import DecisionJournalEntry
 from agentic_portfolio_lab.domain.policy import CurrentPolicyReference
@@ -294,6 +294,7 @@ class HistoryEntryResponse(ApiModel):
     approval_outcome: str
     research_batch_id: str
     research_packet_id: str | None
+    lifecycle_status: str
     execution: HistoryExecutionResponse
 
 
@@ -765,7 +766,44 @@ def research_batch_response(
     )
 
 
-def history_response(history: HistoryPanel, artifacts_by_entry_id: dict[str, ExecutedTrade | None]) -> HistoryResponse:
+def _history_lifecycle_status(
+    artifacts: DecisionHistoryArtifacts,
+    *,
+    price_observations: tuple[PriceObservation, ...],
+) -> str:
+    """Project existing workflow artifacts into one operator-facing outcome."""
+    journal, approval, executed_trade = artifacts.journal_entry, artifacts.approval, artifacts.executed_trade
+    readiness = execution_readiness_response(journal, approval, executed_trade, price_observations=price_observations)
+    return _history_lifecycle_label(
+        readiness.reason_code,
+        approval_outcome=None if approval is None else approval.decision.value,
+    )
+
+
+def _history_lifecycle_label(readiness_reason_code: str, *, approval_outcome: str | None = None) -> str:
+    if approval_outcome == "EXPIRED":
+        return "EXPIRED"
+    labels = {
+        "ALREADY_EXECUTED": "EXECUTED",
+        "HOLD": "HOLD",
+        "VALIDATION_FAILED": "VALIDATION FAILED",
+        "NOT_APPROVED": "AWAITING APPROVAL",
+        "REJECTED": "REJECTED",
+        "POST_APPROVAL_QUOTE_REQUIRED": "APPROVED · AWAITING POST-APPROVAL QUOTE",
+        "READY": "READY TO EXECUTE",
+    }
+    return labels[readiness_reason_code]
+
+
+def history_response(
+    history: HistoryPanel,
+    artifacts_by_entry_id: dict[str, DecisionHistoryArtifacts],
+    *,
+    price_observations: tuple[PriceObservation, ...],
+) -> HistoryResponse:
+    executed_by_entry_id = {
+        entry_id: artifacts.executed_trade for entry_id, artifacts in artifacts_by_entry_id.items()
+    }
     return HistoryResponse(
         entries_newest_first=tuple(
             HistoryEntryResponse(
@@ -779,32 +817,35 @@ def history_response(history: HistoryPanel, artifacts_by_entry_id: dict[str, Exe
                 approval_outcome=entry.approval_outcome,
                 research_batch_id=entry.research_batch_id,
                 research_packet_id=entry.research_packet_id,
+                lifecycle_status=_history_lifecycle_status(
+                    artifacts_by_entry_id[entry.history_entry_id], price_observations=price_observations,
+                ),
                 execution=HistoryExecutionResponse(
                     status=entry.execution.status,
                     executed_trade_id=None
-                    if artifacts_by_entry_id[entry.history_entry_id] is None
-                    else str(artifacts_by_entry_id[entry.history_entry_id].executed_trade_id),
+                    if executed_by_entry_id[entry.history_entry_id] is None
+                    else str(executed_by_entry_id[entry.history_entry_id].executed_trade_id),
                     validated_trade_id=None
-                    if artifacts_by_entry_id[entry.history_entry_id] is None
-                    else str(artifacts_by_entry_id[entry.history_entry_id].validated_trade_id),
+                    if executed_by_entry_id[entry.history_entry_id] is None
+                    else str(executed_by_entry_id[entry.history_entry_id].validated_trade_id),
                     security=None
-                    if artifacts_by_entry_id[entry.history_entry_id] is None
-                    else security_response(artifacts_by_entry_id[entry.history_entry_id].security),
+                    if executed_by_entry_id[entry.history_entry_id] is None
+                    else security_response(executed_by_entry_id[entry.history_entry_id].security),
                     action=None
-                    if artifacts_by_entry_id[entry.history_entry_id] is None
-                    else artifacts_by_entry_id[entry.history_entry_id].action,
+                    if executed_by_entry_id[entry.history_entry_id] is None
+                    else executed_by_entry_id[entry.history_entry_id].action,
                     execution_price=None
-                    if artifacts_by_entry_id[entry.history_entry_id] is None
-                    else _decimal(artifacts_by_entry_id[entry.history_entry_id].execution_price),
+                    if executed_by_entry_id[entry.history_entry_id] is None
+                    else _decimal(executed_by_entry_id[entry.history_entry_id].execution_price),
                     quantity=None
-                    if artifacts_by_entry_id[entry.history_entry_id] is None
-                    else _decimal(artifacts_by_entry_id[entry.history_entry_id].executed_quantity),
+                    if executed_by_entry_id[entry.history_entry_id] is None
+                    else _decimal(executed_by_entry_id[entry.history_entry_id].executed_quantity),
                     notional=None
-                    if artifacts_by_entry_id[entry.history_entry_id] is None
-                    else _decimal(artifacts_by_entry_id[entry.history_entry_id].executed_notional),
+                    if executed_by_entry_id[entry.history_entry_id] is None
+                    else _decimal(executed_by_entry_id[entry.history_entry_id].executed_notional),
                     executed_at=None
-                    if artifacts_by_entry_id[entry.history_entry_id] is None
-                    else _timestamp(artifacts_by_entry_id[entry.history_entry_id].executed_at),
+                    if executed_by_entry_id[entry.history_entry_id] is None
+                    else _timestamp(executed_by_entry_id[entry.history_entry_id].executed_at),
                 ),
             )
             for entry in history.entries_newest_first

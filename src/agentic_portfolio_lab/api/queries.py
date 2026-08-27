@@ -243,12 +243,10 @@ class MvpQueryService:
         history = self._dashboard_view().history
         if history is None:
             raise ValueError("decision history is unavailable")
-        artifacts_by_entry_id = {
-            str(entry.history_entry_id): entry.executed_trade for entry in self._state.history_entries
-        }
+        artifacts_by_entry_id = {str(entry.history_entry_id): entry for entry in self._state.history_entries}
         if {entry.history_entry_id for entry in history.entries_newest_first} != set(artifacts_by_entry_id):
             raise ValueError("decision history panels must match supplied immutable history artifacts")
-        return history_response(history, artifacts_by_entry_id)
+        return history_response(history, artifacts_by_entry_id, price_observations=self._state.price_observations)
 
     def dashboard(self) -> DashboardResponse:
         latest_decision = None

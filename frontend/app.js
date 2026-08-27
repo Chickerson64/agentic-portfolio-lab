@@ -356,6 +356,7 @@ export function normalizeHistory(payload) {
         approvalOutcome: text(field(entry, "approval_outcome", item), `${item}.approval_outcome`),
         researchBatchId: text(field(entry, "research_batch_id", item), `${item}.research_batch_id`),
         researchPacketId: nullableText(field(entry, "research_packet_id", item), `${item}.research_packet_id`),
+        lifecycleStatus: text(field(entry, "lifecycle_status", item), `${item}.lifecycle_status`),
         execution: normalizeHistoryExecution(field(entry, "execution", item), `${item}.execution`),
       };
     }),
@@ -503,7 +504,7 @@ function nav() { return `<section class="view active" id="overview"></section><s
 function renderOverview(state) {
   const { portfolio, benchmark, performance, history } = state.dashboard;
   const holdings = portfolio.positions.slice(0, 4).map((position) => `<div class="holding-row"><i class="symbol">${esc(initials(position.security.ticker))}</i><div class="holding-main"><strong>${esc(position.security.ticker)}</strong><small>${esc(money(position.marketValue, position.security.currency))}</small></div><span class="weight">${esc(quantity(position.quantity))} shares</span></div>`).join("");
-  const activity = history.entries.slice(0, 4).map((entry) => `<div class="holding-row"><i class="symbol">${esc(entry.action === "HOLD" ? "—" : initials(entry.ticker))}</i><div class="history-main"><strong>${esc(entry.action)} ${esc(entry.ticker)}</strong><small>${esc(entry.execution.status)} · ${esc(dateTime(entry.decisionTimestamp))}</small></div></div>`).join("");
+  const activity = history.entries.slice(0, 4).map((entry) => `<div class="holding-row"><i class="symbol">${esc(entry.action === "HOLD" ? "—" : initials(entry.ticker))}</i><div class="history-main"><strong>${esc(entry.action)} ${esc(entry.ticker)}</strong><small>${esc(entry.lifecycleStatus)} · ${esc(dateTime(entry.decisionTimestamp))}</small></div></div>`).join("");
   const benchmarkPosition = benchmark.snapshot.positions[0];
   const benchmarkDetail = benchmarkPosition
     ? `${esc(quantity(benchmarkPosition.quantity))} ${esc(benchmarkPosition.security.ticker)} · ${esc(money(benchmarkPosition.marketValue, benchmarkPosition.security.currency))}`
@@ -630,7 +631,7 @@ function renderHistory(state) {
   const target = document.querySelector("#history"), history = state.history;
   target.innerHTML = `<div class="page-heading"><div><span class="kicker">Immutable lineage</span><h1>Decision & portfolio history</h1><p>Every state change remains linked to its decision cycle and execution artifacts.</p></div><div class="cycle-id"><span class="kicker">Visible history</span><strong>${esc(history.entries.length)} entries</strong><small>Newest first</small></div></div><div class="history-list">${history.entries.map((entry) => {
     const date = dateParts(entry.decisionTimestamp);
-    return `<article class="history-row"><time class="history-date"><strong>${esc(date.day)}</strong><span>${esc(date.month)}<br>${esc(date.year)}</span></time><i class="symbol">${esc(entry.action === "HOLD" ? "—" : initials(entry.ticker))}</i><div class="history-main"><span class="kicker">${esc(entry.execution.status)}</span><strong>${esc(entry.action)} ${esc(entry.ticker)}</strong><small>Reviewer: ${esc(entry.reviewerOutcome)} · Human approval: ${esc(entry.approvalOutcome)} · Target: ${esc(entry.targetWeight)}</small>${entry.execution.executedTradeId ? `<small>Execution ${esc(entry.execution.executedTradeId)} → validated ${esc(entry.execution.validatedTradeId)} · ${esc(quantity(entry.execution.quantity))} ${esc(entry.execution.security.ticker)} @ ${esc(money(entry.execution.executionPrice, entry.execution.security.currency))}</small>` : ""}</div><code title="${esc(entry.decisionCycleId)}">${esc(entry.decisionCycleId)}</code></article>`;
+    return `<article class="history-row"><time class="history-date"><strong>${esc(date.day)}</strong><span>${esc(date.month)}<br>${esc(date.year)}</span></time><i class="symbol">${esc(entry.action === "HOLD" ? "—" : initials(entry.ticker))}</i><div class="history-main"><span class="kicker">${esc(entry.lifecycleStatus)}</span><strong>${esc(entry.action)} ${esc(entry.ticker)}</strong><small>Reviewer: ${esc(entry.reviewerOutcome)} · Human approval: ${esc(entry.approvalOutcome)} · Target: ${esc(entry.targetWeight)}</small>${entry.execution.executedTradeId ? `<small>Execution ${esc(entry.execution.executedTradeId)} → validated ${esc(entry.execution.validatedTradeId)} · ${esc(quantity(entry.execution.quantity))} ${esc(entry.execution.security.ticker)} @ ${esc(money(entry.execution.executionPrice, entry.execution.security.currency))}</small>` : ""}</div><code title="${esc(entry.decisionCycleId)}">${esc(entry.decisionCycleId)}</code></article>`;
   }).join("") || "<section class=empty-state>No decision history is available.</section>"}</div>`;
 }
 function empty(title, message) { return `<section class="empty-state"><span class="kicker">No data</span><h1>${esc(title)}</h1><p>${esc(message)}</p></section>`; }

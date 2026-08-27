@@ -72,8 +72,8 @@ const research = () => ({
 });
 const history = () => ({
   entries_newest_first: [
-    { history_entry_id: "history-hold", decision_cycle_id: "cycle-1", decision_timestamp: "2026-08-11T12:00:00+00:00", action: "HOLD", ticker: "n/a", target_weight: "n/a", reviewer_outcome: "APPROVE", approval_outcome: "APPROVED", research_batch_id: "batch-1", research_packet_id: null, execution: { status: "No execution — HOLD", executed_trade_id: null, validated_trade_id: null, security: null, action: null, execution_price: null, quantity: null, notional: null, executed_at: null } },
-    { history_entry_id: "history-buy", decision_cycle_id: "cycle-0", decision_timestamp: "2026-08-10T12:00:00+00:00", action: "BUY", ticker: "MSFT", target_weight: "25%", reviewer_outcome: "APPROVE", approval_outcome: "APPROVED", research_batch_id: "batch-0", research_packet_id: "packet-1", execution: { status: "Simulated execution", executed_trade_id: "executed-1", validated_trade_id: "validated-1", security: security(), action: "BUY", execution_price: "200", quantity: "0.50000000", notional: "100.00000000", executed_at: "2026-08-10T12:30:00+00:00" } },
+    { history_entry_id: "history-hold", decision_cycle_id: "cycle-1", decision_timestamp: "2026-08-11T12:00:00+00:00", action: "HOLD", ticker: "n/a", target_weight: "n/a", reviewer_outcome: "APPROVE", approval_outcome: "APPROVED", research_batch_id: "batch-1", research_packet_id: null, lifecycle_status: "HOLD", execution: { status: "No execution — HOLD", executed_trade_id: null, validated_trade_id: null, security: null, action: null, execution_price: null, quantity: null, notional: null, executed_at: null } },
+    { history_entry_id: "history-buy", decision_cycle_id: "cycle-0", decision_timestamp: "2026-08-10T12:00:00+00:00", action: "BUY", ticker: "MSFT", target_weight: "25%", reviewer_outcome: "APPROVE", approval_outcome: "APPROVED", research_batch_id: "batch-0", research_packet_id: "packet-1", lifecycle_status: "EXECUTED", execution: { status: "Simulated execution", executed_trade_id: "executed-1", validated_trade_id: "validated-1", security: security(), action: "BUY", execution_price: "200", quantity: "0.50000000", notional: "100.00000000", executed_at: "2026-08-10T12:30:00+00:00" } },
   ],
   chart_points_oldest_first: [{ timestamp: "2026-08-10T12:00:00+00:00", portfolio_value: "1000", managed_return: "0", benchmark_return: "0", absolute_alpha: "0" }],
 });
@@ -88,6 +88,17 @@ assert.equal(dashboardView.portfolio.totalValue, "1120");
 assert.equal(typeof dashboardView.portfolio.totalValue, "string");
 assert.equal(dashboardView.benchmark.security.ticker, "SPY");
 assert.equal(dashboardView.performance.absoluteAlpha, "0.04");
+
+const lifecycleHistory = history();
+lifecycleHistory.entries_newest_first = [
+  { ...history().entries_newest_first[0], lifecycle_status: "HOLD" },
+  { ...history().entries_newest_first[1], lifecycle_status: "EXECUTED" },
+  { ...history().entries_newest_first[1], history_entry_id: "rejected", lifecycle_status: "REJECTED", execution: { ...history().entries_newest_first[1].execution, executed_trade_id: null } },
+  { ...history().entries_newest_first[1], history_entry_id: "quote", lifecycle_status: "APPROVED · AWAITING POST-APPROVAL QUOTE", execution: { ...history().entries_newest_first[1].execution, executed_trade_id: null } },
+  { ...history().entries_newest_first[1], history_entry_id: "ready", lifecycle_status: "READY TO EXECUTE", execution: { ...history().entries_newest_first[1].execution, executed_trade_id: null } },
+  { ...history().entries_newest_first[1], history_entry_id: "legacy", lifecycle_status: "AWAITING APPROVAL", execution: { ...history().entries_newest_first[1].execution, executed_trade_id: null } },
+];
+assert.deepEqual(normalizeHistory(lifecycleHistory).entries.map((entry) => entry.lifecycleStatus), ["HOLD", "EXECUTED", "REJECTED", "APPROVED · AWAITING POST-APPROVAL QUOTE", "READY TO EXECUTE", "AWAITING APPROVAL"]);
 assert.equal(dashboardView.history.chartPoints[0].portfolioValue, "1000");
 assert.equal("total_value" in dashboardView.portfolio, false);
 
