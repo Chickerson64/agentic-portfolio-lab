@@ -559,6 +559,9 @@ class SQLiteMvpReadState:
             price_observations=state.price_observations,
             latest_price_refresh_operation=state.latest_price_refresh_operation,
             reviewer_results=state.reviewer_results,
+            run_id=state.metadata.run_id,
+            run_status=state.metadata.status,
+            run_initialized_at=state.metadata.initialized_at,
         )
 
     @staticmethod

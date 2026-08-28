@@ -438,6 +438,71 @@ class DashboardResponse(ApiModel):
     benchmark_fulfillment_status: str
 
 
+class WorkflowChecklistAuditFieldResponse(ApiModel):
+    """An immutable, presentation-ready field copied from an audit artifact."""
+
+    name: str
+    value: str
+
+
+class WorkflowChecklistArtifactResponse(ApiModel):
+    """Identity and chronology for one existing authoritative artifact."""
+
+    artifact_type: str
+    artifact_id: str
+    occurred_at: str
+    decision_cycle_id: str | None = None
+    audit_fields: tuple[WorkflowChecklistAuditFieldResponse, ...] = ()
+
+
+class WorkflowChecklistStepResponse(ApiModel):
+    """One ordered, read-only view of an existing workflow concern.
+
+    ``status`` and ``reason_code`` intentionally retain the vocabulary of the
+    owning artifact or readiness contract.  They are not a new lifecycle enum.
+    """
+
+    step_id: str
+    label: str
+    status: str | None
+    reason_code: str | None
+    completed: bool
+    terminal: bool
+    artifact: WorkflowChecklistArtifactResponse | None
+    available_action: str | None = None
+
+
+class WorkflowChecklistResponse(ApiModel):
+    """Seven stable workflow steps projected from one immutable read snapshot."""
+
+    steps: tuple[WorkflowChecklistStepResponse, ...]
+
+
+class WeeklyRunResponse(ApiModel):
+    """Identity and start time of the durable local run, when available."""
+
+    run_id: str
+    status: str
+    initialized_at: str
+
+
+class ReadinessBlockerResponse(ApiModel):
+    """An authoritative reason that currently prevents workflow progress."""
+
+    step_id: str
+    reason_code: str
+    artifact: WorkflowChecklistArtifactResponse | None
+
+
+class WeeklyRunReadinessResponse(ApiModel):
+    """Read-only readiness projection for the current weekly paper-trading run."""
+
+    current_run: WeeklyRunResponse | None
+    steps: tuple[WorkflowChecklistStepResponse, ...]
+    next_action: str | None
+    blockers: tuple[ReadinessBlockerResponse, ...]
+
+
 def security_response(security: SecurityIdentity) -> SecurityResponse:
     return SecurityResponse(
         ticker=security.ticker,

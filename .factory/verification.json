@@ -3,6 +3,7 @@
     "name": "Python test suite",
     "executable": "pytest",
     "args": ["-q"],
+    "timeoutMs": 60000,
     "env": {
       "PYTHONPATH": "src"
     }

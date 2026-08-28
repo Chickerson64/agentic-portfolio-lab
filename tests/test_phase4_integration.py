@@ -9,8 +9,11 @@ from decimal import Decimal
 from fastapi.testclient import TestClient
 
 from agentic_portfolio_lab.api.app import create_app
+from agentic_portfolio_lab.application.decision_commands import ReviewDecisionService
+from agentic_portfolio_lab.application.local_state_codec import encode
 from agentic_portfolio_lab.dashboard_demo import _demo_research_batch
 from agentic_portfolio_lab.domain.portfolio import SecurityIdentity
+from agentic_portfolio_lab.domain.reviewer import ReviewerMetadata, ReviewerResult
 from agentic_portfolio_lab.domain.recommendations import (
     PortfolioRecommendation,
     RecommendationEvidenceReference,
@@ -49,6 +52,19 @@ class _BuyManager:
         )
 
 
+class _BuyReviewer:
+    """Persist a reviewer artifact so the read-only endpoint sees every decision artifact type."""
+
+    def review(self, context):
+        return ReviewerResult(
+            context=context,
+            decision="APPROVE",
+            findings=(),
+            reviewed_at=START + timedelta(minutes=3, seconds=30),
+            metadata=ReviewerMetadata("checklist-reviewer", "test-v1", "fake", "fake-model"),
+        )
+
+
 def test_durable_buy_approval_execution_flow_survives_restart_and_api_reads(tmp_path) -> None:
     database_path = tmp_path / "run.sqlite"
     store = SQLiteLocalRunStore(database_path)
@@ -74,11 +90,22 @@ def test_durable_buy_approval_execution_flow_survives_restart_and_api_reads(tmp_
     ))
 
     client = TestClient(create_app(database_path=str(database_path), value_manager=_BuyManager()))
+    pending = client.get("/weekly-run/readiness")
+    assert pending.status_code == 200
+    assert pending.json()["current_run"] == {
+        "run_id": str(initial.metadata.run_id), "status": "ACTIVE", "initialized_at": START.isoformat(),
+    }
+    assert pending.json()["steps"][-1]["status"] is None
+    assert pending.json()["blockers"] == []
     run = client.post("/commands/run-value-manager", json={"occurred_at": (START + timedelta(minutes=3)).isoformat()})
     assert run.status_code == 200
     cycle_id = run.json()["decision_cycle_id"]
     assert cycle_id == str(research.decision_cycle_id)
     assert run.json()["execution_readiness"]["reason_code"] == "NOT_APPROVED"
+    reviewer_result = ReviewDecisionService(store, reviewer=_BuyReviewer()).review(
+        decision_cycle_id=research.decision_cycle_id,
+    ).reviewer_result
+    assert reviewer_result.decision.value == "APPROVE"
 
     approved = client.post(
         f"/commands/decisions/{cycle_id}/approve",
@@ -86,6 +113,10 @@ def test_durable_buy_approval_execution_flow_survives_restart_and_api_reads(tmp_
     )
     assert approved.status_code == 200
     assert approved.json()["execution_readiness"]["reason_code"] == "POST_APPROVAL_QUOTE_REQUIRED"
+    post_approval = client.get("/weekly-run/readiness")
+    assert post_approval.status_code == 200
+    assert post_approval.json()["next_action"] is None
+    assert post_approval.json()["blockers"][-1]["reason_code"] == "POST_APPROVAL_QUOTE_REQUIRED"
 
     # Execution must choose a persisted quote after the approval boundary.
     current = store.open_run()
@@ -94,6 +125,11 @@ def test_durable_buy_approval_execution_flow_survives_restart_and_api_reads(tmp_
         security, Decimal("101"), START.date(), START + timedelta(minutes=5), "USD", "fake", "fake-quote",
     )
     store.save_transition(replace(current, price_observations=(*current.price_observations, execution_quote)))
+    ready = client.get("/weekly-run/readiness")
+    assert ready.status_code == 200
+    assert ready.json()["steps"][-1]["status"] == "READY"
+    assert ready.json()["next_action"] == "EXECUTE_PAPER_TRADE"
+    assert ready.json()["blockers"] == []
     executed = client.post(
         f"/commands/decisions/{cycle_id}/execute-paper-trade",
         params={"executed_at": (START + timedelta(minutes=6)).isoformat()},
@@ -120,6 +156,17 @@ def test_durable_buy_approval_execution_flow_survives_restart_and_api_reads(tmp_
     assert unrelated_quote in reopened.price_observations
     assert reopened.benchmark_history == initial.benchmark_history
 
+    # The durable read endpoint is a pure projection: compare the complete
+    # persisted graph, including portfolios/cash, prices, benchmark, research,
+    # decision, reviewer, approval, execution, trades, and histories.
+    before_read = encode(reopened)
+    readiness_response = client.get("/weekly-run/readiness")
+    after_read = SQLiteLocalRunStore(database_path).open_run()
+    assert readiness_response.status_code == 200
+    assert after_read is not None
+    assert encode(after_read) == before_read
+    assert after_read.reviewer_results == (reviewer_result,)
+
     portfolio = client.get("/portfolio")
     latest = client.get("/decisions/latest")
     history = client.get("/decisions")
@@ -132,6 +179,10 @@ def test_durable_buy_approval_execution_flow_survives_restart_and_api_reads(tmp_
     assert history.json()["entries_newest_first"][0]["execution"]["executed_trade_id"] == str(execution.executed_trade.executed_trade_id)
     assert dashboard.json()["latest_decision"]["execution_readiness"]["reason_code"] == "ALREADY_EXECUTED"
     assert performance.json() is None
+    already_executed = client.get("/weekly-run/readiness")
+    assert already_executed.status_code == 200
+    assert already_executed.json()["next_action"] is None
+    assert already_executed.json()["blockers"][-1]["reason_code"] == "ALREADY_EXECUTED"
 
     second_execution = client.post(
         f"/commands/decisions/{cycle_id}/execute-paper-trade",

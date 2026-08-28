@@ -26,6 +26,7 @@ from .models import (
     PerformanceResponse,
     PortfolioSnapshotResponse,
     ResearchBatchResponse,
+    WeeklyRunReadinessResponse,
     PriceRefreshResponse,
     PriceRefreshStatusResponse,
     PriceRefreshRecoveryCommand,
@@ -292,5 +293,9 @@ def create_router(
     @router.get("/dashboard", response_model=DashboardResponse)
     def dashboard() -> DashboardResponse:
         return _query_or_unavailable(service().dashboard)
+
+    @router.get("/weekly-run/readiness", response_model=WeeklyRunReadinessResponse)
+    def weekly_run_readiness() -> WeeklyRunReadinessResponse:
+        return _query_or_unavailable(service().weekly_run_readiness)
 
     return router
