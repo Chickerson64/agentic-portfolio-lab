@@ -249,6 +249,53 @@ function normalizeExecutionReadiness(payload, context) {
   };
 }
 
+function normalizeChecklistArtifact(payload, context) {
+  if (payload === null) return null;
+  return {
+    artifactType: text(field(payload, "artifact_type", context), `${context}.artifact_type`),
+    artifactId: text(field(payload, "artifact_id", context), `${context}.artifact_id`),
+    occurredAt: text(field(payload, "occurred_at", context), `${context}.occurred_at`),
+    decisionCycleId: nullableText(field(payload, "decision_cycle_id", context), `${context}.decision_cycle_id`),
+    auditFields: list(field(payload, "audit_fields", context), `${context}.audit_fields`).map((item, index) => ({
+      name: text(field(item, "name", `${context}.audit_fields[${index}]`), `${context}.audit_fields[${index}].name`),
+      value: text(field(item, "value", `${context}.audit_fields[${index}]`), `${context}.audit_fields[${index}].value`),
+    })),
+  };
+}
+
+function normalizeChecklistStep(payload, context) {
+  return {
+    stepId: text(field(payload, "step_id", context), `${context}.step_id`),
+    label: text(field(payload, "label", context), `${context}.label`),
+    status: nullableText(field(payload, "status", context), `${context}.status`),
+    reasonCode: nullableText(field(payload, "reason_code", context), `${context}.reason_code`),
+    completed: boolean(field(payload, "completed", context), `${context}.completed`),
+    terminal: boolean(field(payload, "terminal", context), `${context}.terminal`),
+    artifact: normalizeChecklistArtifact(field(payload, "artifact", context), `${context}.artifact`),
+    availableAction: nullableText(field(payload, "available_action", context), `${context}.available_action`),
+  };
+}
+
+export function normalizeWeeklyRunReadiness(payload) {
+  const context = "weekly run readiness";
+  record(payload, context);
+  const run = nullableRecord(field(payload, "current_run", context), `${context}.current_run`);
+  return {
+    currentRun: run === null ? null : {
+      runId: text(field(run, "run_id", `${context}.current_run`), `${context}.current_run.run_id`),
+      status: text(field(run, "status", `${context}.current_run`), `${context}.current_run.status`),
+      initializedAt: text(field(run, "initialized_at", `${context}.current_run`), `${context}.current_run.initialized_at`),
+    },
+    steps: list(field(payload, "steps", context), `${context}.steps`).map((step, index) => normalizeChecklistStep(step, `${context}.steps[${index}]`)),
+    nextAction: nullableText(field(payload, "next_action", context), `${context}.next_action`),
+    blockers: list(field(payload, "blockers", context), `${context}.blockers`).map((blocker, index) => ({
+      stepId: text(field(blocker, "step_id", `${context}.blockers[${index}]`), `${context}.blockers[${index}].step_id`),
+      reasonCode: text(field(blocker, "reason_code", `${context}.blockers[${index}]`), `${context}.blockers[${index}].reason_code`),
+      artifact: normalizeChecklistArtifact(field(blocker, "artifact", `${context}.blockers[${index}]`), `${context}.blockers[${index}].artifact`),
+    })),
+  };
+}
+
 export function normalizeDecision(payload) {
   if (payload === null) return null;
   const context = "decision";
@@ -436,7 +483,7 @@ export function normalizeBootstrapOverview(payload) {
 }
 
 export async function loadApplication() {
-  const [health, dashboard, decision, research, history, portfolio, performance, priceRefresh] = await Promise.all([
+  const [health, dashboard, decision, research, history, portfolio, performance, priceRefresh, weeklyRunReadiness] = await Promise.all([
     apiClient.get("/health"),
     apiClient.get("/dashboard"),
     apiClient.get("/decisions/latest", { allowNotFound: true }),
@@ -445,6 +492,7 @@ export async function loadApplication() {
     apiClient.get("/portfolio"),
     apiClient.get("/performance"),
     apiClient.get("/price-refresh/latest", { allowNotFound: true }),
+    apiClient.get("/weekly-run/readiness"),
   ]);
   return {
     health: normalizeHealth(health),
@@ -455,6 +503,7 @@ export async function loadApplication() {
     portfolio: normalizePortfolio(portfolio, "portfolio"),
     performance: normalizePerformance(performance, "performance"),
     priceRefresh: normalizePriceRefreshStatus(priceRefresh),
+    weeklyRunReadiness: normalizeWeeklyRunReadiness(weeklyRunReadiness),
   };
 }
 
@@ -504,6 +553,39 @@ function chart(points) {
 }
 
 function nav() { return `<section class="view active" id="overview"></section><section class="view" id="decision"></section><section class="view" id="research"></section><section class="view" id="portfolio"></section><section class="view" id="history"></section>`; }
+function checklistState(step) {
+  if (step.terminal) return "terminal";
+  if (step.completed) return "done";
+  if (step.reasonCode) return "blocked";
+  return "pending";
+}
+function presentationLabel(value) {
+  return value.toLowerCase().split("_").map((word) => word ? `${word[0].toUpperCase()}${word.slice(1)}` : "").join(" ");
+}
+function checklistStepLabel(readiness, stepId) {
+  return readiness.steps.find((step) => step.stepId === stepId)?.label ?? presentationLabel(stepId);
+}
+function artifactContext(artifact) {
+  if (!artifact) return "";
+  const audit = artifact.auditFields.map((item) => `${esc(item.name)}: ${esc(item.value)}`).join(" · ");
+  return `<small class="checklist-audit">${esc(artifact.artifactType)} · ${esc(artifact.artifactId)} · ${esc(dateTime(artifact.occurredAt))}${artifact.decisionCycleId ? ` · cycle ${esc(artifact.decisionCycleId)}` : ""}${audit ? ` · ${audit}` : ""}</small>`;
+}
+export function renderWeeklyRunChecklist(readiness) {
+  const run = readiness.currentRun ? `Run ${esc(readiness.currentRun.runId)} · ${esc(readiness.currentRun.status)} · started ${esc(dateTime(readiness.currentRun.initializedAt))}` : "No durable weekly run is recorded.";
+  const steps = readiness.steps.map((step) => {
+    const state = checklistState(step);
+    const label = state === "done" ? "DONE" : state === "blocked" ? "BLOCKED" : state === "terminal" ? "TERMINAL" : "PENDING";
+    const detail = [step.status, step.reasonCode].filter(Boolean).join(" · ") || "Awaiting artifact";
+    return `<li class="checklist-step ${state}"><span class="checklist-marker" aria-hidden="true"></span><div><strong>${esc(step.label)}</strong><p>${esc(detail)}</p>${artifactContext(step.artifact)}</div><span class="checklist-status">${label}</span></li>`;
+  }).join("");
+  const blockers = readiness.blockers.length
+    ? `<div class="checklist-blockers"><span class="kicker">Current blockers</span>${readiness.blockers.map((blocker) => `<p><strong>${esc(checklistStepLabel(readiness, blocker.stepId))}</strong> · ${esc(blocker.reasonCode)}</p>${artifactContext(blocker.artifact)}`).join("")}</div>`
+    : "";
+  const nextAction = readiness.nextAction
+    ? `<div class="checklist-next"><span class="kicker">Suggested next action</span><strong>${esc(presentationLabel(readiness.nextAction))}</strong><button class="text-button" type="button" data-view-jump="decision">View explicit control →</button><small>This suggestion does not run a command.</small></div>`
+    : "";
+  return `<article class="surface weekly-checklist" aria-label="Weekly Run / Operator Checklist"><div class="surface-head"><div><span class="kicker">Weekly Run</span><h2>Operator Checklist</h2></div><span class="chip">READ-ONLY</span></div><p class="muted checklist-run">${run}</p><ol>${steps}</ol>${blockers}${nextAction}</article>`;
+}
 function renderOverview(state) {
   const { portfolio, benchmark, performance, history } = state.dashboard;
   const holdings = portfolio.positions.slice(0, 4).map((position) => `<div class="holding-row"><i class="symbol">${esc(initials(position.security.ticker))}</i><div class="holding-main"><strong>${esc(position.security.ticker)}</strong><small>${esc(money(position.marketValue, position.security.currency))}</small></div><span class="weight">${esc(quantity(position.quantity))} shares</span></div>`).join("");
@@ -516,7 +598,7 @@ function renderOverview(state) {
   const alpha = performance
     ? `<strong class="${Number(performance.absoluteAlpha) >= 0 ? "positive" : "negative"}">${esc(percent(performance.absoluteAlpha))}</strong>`
     : `<strong class="muted">Unavailable</strong>`;
-  document.querySelector("#overview").innerHTML = `<div class="page-heading"><div><span class="kicker">Portfolio command center</span><h1>Portfolio state at a glance</h1><p>${state.health.persisted ? "Durable" : "Current"} state from the deterministic application API.</p></div><div class="cycle-id"><span class="kicker">Valuation</span><strong>${esc(dateTime(portfolio.asOfTimestamp))}</strong><small>${esc(portfolio.sourceProviderIdentity)} · ${esc(portfolio.priceConvention)}</small></div></div><section class="overview-hero surface"><div><span class="kicker">Managed portfolio value</span><strong class="value">${esc(money(portfolio.totalValue, portfolio.baseCurrency))}</strong><small class="muted">Cash ${esc(money(portfolio.cashValue, portfolio.baseCurrency))}</small></div><div><div class="surface-head"><div><span class="kicker">Performance snapshot</span><h2>Managed vs. SPY</h2></div><div class="chart-legend"><span class="managed">Managed</span><span class="spy">SPY</span></div></div>${chart(history.chartPoints)}</div><div><span class="kicker">Comparable benchmark</span><strong class="value">${esc(money(benchmark.snapshot.totalValue, benchmark.snapshot.baseCurrency))}</strong><p class="muted">${benchmarkDetail}</p><span class="chip">${esc(state.dashboard.benchmarkFulfillmentStatus)}</span></div></section>${controls}<div class="metric-grid"><article class="metric-card"><span>Managed value</span><strong>${esc(money(portfolio.totalValue, portfolio.baseCurrency))}</strong></article><article class="metric-card"><span>SPY benchmark</span><strong>${esc(money(benchmark.snapshot.totalValue, benchmark.snapshot.baseCurrency))}</strong><small>${benchmarkDetail}</small></article><article class="metric-card"><span>Absolute alpha</span>${alpha}</article><article class="metric-card"><span>Available cash</span><strong>${esc(money(portfolio.cashValue, portfolio.baseCurrency))}</strong></article></div><div class="two-col"><article class="surface"><div class="surface-head"><div><span class="kicker">Portfolio</span><h2>Holdings preview</h2></div><button class="text-button" data-view-jump="portfolio">All holdings →</button></div>${holdings || `<div class="empty-state"><strong>No managed positions</strong><p>The managed portfolio currently holds cash only.</p></div>`}</article><article class="surface"><div class="surface-head"><div><span class="kicker">AI decision journal</span><h2>Recent activity</h2></div><button class="text-button" data-view-jump="history">Full history →</button></div>${activity || "<p class=muted>No decision history is available.</p>"}</article></div>`;
+  document.querySelector("#overview").innerHTML = `<div class="page-heading"><div><span class="kicker">Portfolio command center</span><h1>Portfolio state at a glance</h1><p>${state.health.persisted ? "Durable" : "Current"} state from the deterministic application API.</p></div><div class="cycle-id"><span class="kicker">Valuation</span><strong>${esc(dateTime(portfolio.asOfTimestamp))}</strong><small>${esc(portfolio.sourceProviderIdentity)} · ${esc(portfolio.priceConvention)}</small></div></div><section class="overview-hero surface"><div><span class="kicker">Managed portfolio value</span><strong class="value">${esc(money(portfolio.totalValue, portfolio.baseCurrency))}</strong><small class="muted">Cash ${esc(money(portfolio.cashValue, portfolio.baseCurrency))}</small></div><div><div class="surface-head"><div><span class="kicker">Performance snapshot</span><h2>Managed vs. SPY</h2></div><div class="chart-legend"><span class="managed">Managed</span><span class="spy">SPY</span></div></div>${chart(history.chartPoints)}</div><div><span class="kicker">Comparable benchmark</span><strong class="value">${esc(money(benchmark.snapshot.totalValue, benchmark.snapshot.baseCurrency))}</strong><p class="muted">${benchmarkDetail}</p><span class="chip">${esc(state.dashboard.benchmarkFulfillmentStatus)}</span></div></section>${controls}${renderWeeklyRunChecklist(state.weeklyRunReadiness)}<div class="metric-grid"><article class="metric-card"><span>Managed value</span><strong>${esc(money(portfolio.totalValue, portfolio.baseCurrency))}</strong></article><article class="metric-card"><span>SPY benchmark</span><strong>${esc(money(benchmark.snapshot.totalValue, benchmark.snapshot.baseCurrency))}</strong><small>${benchmarkDetail}</small></article><article class="metric-card"><span>Absolute alpha</span>${alpha}</article><article class="metric-card"><span>Available cash</span><strong>${esc(money(portfolio.cashValue, portfolio.baseCurrency))}</strong></article></div><div class="two-col"><article class="surface"><div class="surface-head"><div><span class="kicker">Portfolio</span><h2>Holdings preview</h2></div><button class="text-button" data-view-jump="portfolio">All holdings →</button></div>${holdings || `<div class="empty-state"><strong>No managed positions</strong><p>The managed portfolio currently holds cash only.</p></div>`}</article><article class="surface"><div class="surface-head"><div><span class="kicker">AI decision journal</span><h2>Recent activity</h2></div><button class="text-button" data-view-jump="history">Full history →</button></div>${activity || "<p class=muted>No decision history is available.</p>"}</article></div>`;
   const form = document.querySelector("#cash-event-form");
   if (form) form.addEventListener("submit", async (event) => { event.preventDefault(); const data = new FormData(form); try { await apiClient.post("/commands/cash-events", { amount: data.get("amount"), currency: data.get("currency"), source: data.get("source"), effective_at: new Date(data.get("effective_at")).toISOString() }); await start(); } catch (error) { refreshStatus = `Cash Event failed: ${error.message}`; document.querySelector("#health-status").textContent = refreshStatus; } });
   const fulfill = document.querySelector("#fulfill-benchmark");

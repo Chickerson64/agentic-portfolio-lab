@@ -36,6 +36,13 @@ from .models import (
     performance_response,
     portfolio_snapshot_response,
     research_batch_response,
+    WorkflowChecklistArtifactResponse,
+    WorkflowChecklistAuditFieldResponse,
+    WorkflowChecklistResponse,
+    WorkflowChecklistStepResponse,
+    WeeklyRunReadinessResponse,
+    WeeklyRunResponse,
+    ReadinessBlockerResponse,
 )
 
 
@@ -66,6 +73,9 @@ class MvpReadStateSnapshot:
     price_observations: tuple[PriceObservation, ...] = ()
     latest_price_refresh_operation: object | None = None
     reviewer_results: tuple[ReviewerResult, ...] = ()
+    run_id: UUID | None = None
+    run_status: str | None = None
+    run_initialized_at: datetime | None = None
 
     @classmethod
     def from_dashboard_demo(cls, data: DashboardDemoData) -> "MvpReadStateSnapshot":
@@ -274,4 +284,192 @@ class MvpQueryService:
             research=research,
             history=self.decisions(),
             benchmark_fulfillment_status=getattr(self._state, "benchmark_fulfillment_status", "PENDING_NO_ELIGIBLE_PRICE"),
+        )
+
+    def workflow_checklist(self) -> WorkflowChecklistResponse:
+        """Project the operator checklist without changing, refreshing, or pricing state.
+
+        This deliberately reads the operation and artifact timestamps directly;
+        unlike ``latest_price_refresh`` it does not introduce a reporting-time
+        clock value into the projection.
+        """
+        operation = getattr(self._state, "latest_price_refresh_operation", None)
+        refresh = WorkflowChecklistStepResponse(
+            step_id="price_refresh",
+            label="Price refresh",
+            status=None if operation is None else operation.status.value,
+            reason_code=None if operation is None else operation.failure_code,
+            completed=operation is not None and operation.status.value == "COMPLETED",
+            terminal=False,
+            artifact=None if operation is None else self._artifact(
+                "price_refresh_operation", operation.operation_id, operation.completed_at or operation.started_at,
+                provider_identity=operation.provider_identity,
+                expected_security_count=operation.expected_security_count,
+                persisted_observation_count=operation.persisted_observation_count,
+                latest_source_timestamp=operation.latest_source_timestamp,
+            ),
+        )
+
+        fulfillment_status = getattr(self._state, "benchmark_fulfillment_status", "PENDING_NO_ELIGIBLE_PRICE")
+        fulfillments = tuple(getattr(self._state, "benchmark_fulfillments", ()))
+        fulfillment = fulfillments[-1] if fulfillments else None
+        benchmark = WorkflowChecklistStepResponse(
+            step_id="spy_benchmark",
+            label="SPY benchmark",
+            status=fulfillment_status,
+            reason_code=None,
+            completed=fulfillment_status != "PENDING_NO_ELIGIBLE_PRICE",
+            terminal=False,
+            artifact=None if fulfillment is None else self._artifact(
+                "benchmark_fulfillment", fulfillment.fulfillment_id, fulfillment.fulfilled_at,
+                provider_identity=fulfillment.provider_identity,
+                observed_at=fulfillment.price_observation.observed_at,
+                decision_cycle_id=None,
+            ),
+        )
+
+        batch = self._authoritative_research_or_none()
+        research = WorkflowChecklistStepResponse(
+            step_id="research",
+            label="Research",
+            status=None if batch is None else "AVAILABLE",
+            reason_code=None,
+            completed=batch is not None,
+            terminal=False,
+            artifact=None if batch is None else self._artifact(
+                "research_batch", batch.batch_id, batch.created_at,
+                decision_cycle_id=batch.decision_cycle_id, as_of_timestamp=batch.as_of_timestamp,
+            ),
+        )
+
+        journal = self._state.latest_journal_entry
+        approval = self._state.latest_approval
+        execution = None
+        reviewer = None
+        readiness = None
+        if journal is not None:
+            execution = self._execution_for_journal(journal)
+            reviewer = self._reviewer_for(journal)
+            readiness = decision_memo_response(
+                journal, approval, execution, price_observations=self._state.price_observations,
+                reviewer_result=reviewer,
+            ).execution_readiness
+
+        decision = WorkflowChecklistStepResponse(
+            step_id="value_manager_decision_validation",
+            label="Value Manager decision and validation",
+            status=None if journal is None else journal.risk_validation_result.status.value,
+            reason_code=None if journal is None else journal.decision_result.recommendation.action.value,
+            completed=journal is not None,
+            terminal=journal is not None and (journal.decision_result.recommendation.action.value == "HOLD" or not journal.risk_validation_result.passed),
+            artifact=None if journal is None else self._artifact(
+                "decision_journal", journal.decision_cycle_id, journal.journaled_at,
+                decision_cycle_id=journal.decision_cycle_id,
+                produced_at=journal.decision_result.produced_at,
+                action=journal.decision_result.recommendation.action.value,
+                validation_status=journal.risk_validation_result.status.value,
+                validated_trade_id=None if journal.risk_validation_result.validated_trade is None else journal.risk_validation_result.validated_trade.validated_trade_id,
+            ),
+        )
+        review = WorkflowChecklistStepResponse(
+            step_id="ai_reviewer",
+            label="AI Reviewer",
+            status=None if reviewer is None else reviewer.decision.value,
+            reason_code=None,
+            completed=reviewer is not None,
+            terminal=False,
+            artifact=None if reviewer is None else self._artifact(
+                "ai_reviewer_result", reviewer.decision_cycle_id, reviewer.reviewed_at,
+                decision_cycle_id=reviewer.decision_cycle_id,
+                finding_count=len(reviewer.findings),
+            ),
+        )
+        approval_step = WorkflowChecklistStepResponse(
+            step_id="human_approval",
+            label="Human approval",
+            status=None if approval is None else approval.decision.value,
+            reason_code=None if readiness is None else readiness.reason_code,
+            completed=approval is not None,
+            terminal=approval is not None and approval.decision.value != "APPROVED",
+            artifact=None if approval is None else self._artifact(
+                "decision_approval", approval.decision_cycle_id, approval.decided_at,
+                decision_cycle_id=approval.decision_cycle_id,
+                decision_maker_id=approval.decision_maker_id,
+            ),
+        )
+        execution_step = WorkflowChecklistStepResponse(
+            step_id="paper_execution",
+            label="Paper execution",
+            status=None if readiness is None else readiness.reason_code,
+            reason_code=None if readiness is None else readiness.reason_code,
+            completed=execution is not None,
+            terminal=readiness is not None and readiness.reason_code in {"HOLD", "VALIDATION_FAILED", "REJECTED", "ALREADY_EXECUTED"},
+            artifact=None if execution is None else self._artifact(
+                "executed_trade", execution.executed_trade_id, execution.executed_at,
+                decision_cycle_id=journal.decision_cycle_id if journal is not None else None,
+                validated_trade_id=execution.validated_trade_id,
+                ticker=execution.security.ticker,
+            ),
+            # ``executable`` is the existing authoritative readiness contract;
+            # no command eligibility is reimplemented here.
+            available_action=None if readiness is None or not readiness.executable else "EXECUTE_PAPER_TRADE",
+        )
+        return WorkflowChecklistResponse(steps=(refresh, benchmark, research, decision, review, approval_step, execution_step))
+
+    def weekly_run_readiness(self) -> WeeklyRunReadinessResponse:
+        """Return the current run's authoritative, non-mutating readiness view."""
+        checklist = self.workflow_checklist()
+        execution = checklist.steps[-1]
+        blockers: list[ReadinessBlockerResponse] = []
+        for step in checklist.steps:
+            # Price-refresh failures are operation-owned blockers. Execution
+            # readiness is calculated by the established decision contract.
+            if step.step_id == "price_refresh" and step.status == "FAILED":
+                blockers.append(ReadinessBlockerResponse(
+                    step_id=step.step_id,
+                    reason_code=step.reason_code or step.status,
+                    artifact=step.artifact,
+                ))
+        if execution.reason_code is not None and execution.reason_code != "READY":
+            blockers.append(ReadinessBlockerResponse(
+                step_id=execution.step_id,
+                reason_code=execution.reason_code,
+                artifact=execution.artifact,
+            ))
+        current_run = None
+        if self._state.run_id is not None:
+            assert self._state.run_status is not None
+            assert self._state.run_initialized_at is not None
+            current_run = WeeklyRunResponse(
+                run_id=str(self._state.run_id),
+                status=self._state.run_status,
+                initialized_at=self._state.run_initialized_at.isoformat(),
+            )
+        return WeeklyRunReadinessResponse(
+            current_run=current_run,
+            steps=checklist.steps,
+            next_action=execution.available_action,
+            blockers=tuple(blockers),
+        )
+
+    def _authoritative_research_or_none(self) -> ResearchBatch | None:
+        batches = tuple(getattr(self._state, "research_batches", ()))
+        if batches:
+            return latest_authoritative_research_batch(batches)
+        journal = self._state.latest_journal_entry
+        # Older persisted snapshots predate standalone research batches.  Their
+        # journal context remains the authoritative, representable lineage.
+        return None if journal is None else journal.decision_result.context.research_batch
+
+    @staticmethod
+    def _artifact(artifact_type: str, artifact_id, occurred_at: datetime, *, decision_cycle_id=None, **fields) -> WorkflowChecklistArtifactResponse:
+        return WorkflowChecklistArtifactResponse(
+            artifact_type=artifact_type,
+            artifact_id=str(artifact_id),
+            occurred_at=occurred_at.isoformat(),
+            decision_cycle_id=None if decision_cycle_id is None else str(decision_cycle_id),
+            audit_fields=tuple(
+                WorkflowChecklistAuditFieldResponse(name=name, value=value.isoformat() if isinstance(value, datetime) else str(value))
+                for name, value in fields.items() if value is not None
+            ),
         )

@@ -12,6 +12,8 @@ const {
   normalizeHistory,
   normalizePriceRefresh,
   normalizePriceRefreshStatus,
+  normalizeWeeklyRunReadiness,
+  renderWeeklyRunChecklist,
   normalizeBuildResearch,
   normalizeBootstrapOverview,
   refreshPrices,
@@ -82,6 +84,77 @@ const dashboard = () => ({
   performance: { managed_portfolio_id: "portfolio-1", benchmark_portfolio_id: "benchmark-1", currency: "USD", managed_cumulative_return: "0.12", benchmark_cumulative_return: "0.08", absolute_alpha: "0.04", relative_alpha: "0.037", as_of_timestamp: "2026-08-11T12:00:00+00:00" },
   latest_decision: decision(), research: research(), history: history(), benchmark_fulfillment_status: "PENDING_NO_ELIGIBLE_PRICE",
 });
+const checklistArtifact = (type = "decision_journal") => ({ artifact_type: type, artifact_id: "artifact-1", occurred_at: "2026-08-11T12:00:00+00:00", decision_cycle_id: "cycle-1", audit_fields: [{ name: "provider_identity", value: "twelve-data" }] });
+const weeklyRunReadiness = ({ terminal = false, executed = false } = {}) => ({
+  current_run: { run_id: "run-1", status: "ACTIVE", initialized_at: "2026-08-10T12:00:00+00:00" },
+  steps: [
+    { step_id: "price_refresh", label: "Price refresh", status: "COMPLETED", reason_code: null, completed: true, terminal: false, artifact: checklistArtifact("price_refresh_operation"), available_action: null },
+    { step_id: "spy_benchmark", label: "SPY benchmark", status: "PENDING_NO_ELIGIBLE_PRICE", reason_code: null, completed: false, terminal: false, artifact: null, available_action: null },
+    { step_id: "research", label: "Research", status: null, reason_code: null, completed: false, terminal: false, artifact: null, available_action: null },
+    { step_id: "value_manager_decision_validation", label: "Value Manager decision and validation", status: "PASSED", reason_code: terminal ? "HOLD" : null, completed: terminal, terminal, artifact: terminal ? checklistArtifact() : null, available_action: null },
+    { step_id: "ai_reviewer", label: "AI Reviewer", status: null, reason_code: null, completed: false, terminal: false, artifact: null, available_action: null },
+    { step_id: "human_approval", label: "Human approval", status: null, reason_code: null, completed: false, terminal: false, artifact: null, available_action: null },
+    { step_id: "paper_execution", label: "Paper execution", status: executed ? "ALREADY_EXECUTED" : terminal ? "HOLD" : "POST_APPROVAL_QUOTE_REQUIRED", reason_code: executed ? "ALREADY_EXECUTED" : terminal ? "HOLD" : "POST_APPROVAL_QUOTE_REQUIRED", completed: executed, terminal: executed || terminal, artifact: executed ? checklistArtifact("executed_trade") : null, available_action: null },
+  ],
+  next_action: null,
+  blockers: [{ step_id: "paper_execution", reason_code: executed ? "ALREADY_EXECUTED" : terminal ? "HOLD" : "POST_APPROVAL_QUOTE_REQUIRED", artifact: null }],
+});
+
+const readyWeeklyRunReadiness = () => ({
+  ...weeklyRunReadiness(),
+  steps: weeklyRunReadiness().steps.map((step) => step.step_id === "paper_execution" ? { ...step, status: "READY", reason_code: "READY", available_action: "EXECUTE_PAPER_TRADE" } : step),
+  next_action: "EXECUTE_PAPER_TRADE",
+  blockers: [],
+});
+
+const normalizedChecklist = normalizeWeeklyRunReadiness(readyWeeklyRunReadiness());
+assert.equal(normalizedChecklist.steps.length, 7);
+assert.equal(normalizedChecklist.steps[1].artifact, null);
+assert.equal(normalizedChecklist.steps[0].artifact.auditFields[0].value, "twelve-data");
+const checklistMarkup = renderWeeklyRunChecklist(normalizedChecklist);
+assert.match(checklistMarkup, /Operator Checklist/);
+assert.match(checklistMarkup, /DONE/);
+assert.match(checklistMarkup, /Price refresh/);
+assert.doesNotMatch(checklistMarkup, /value_manager_decision_validation/);
+assert.match(checklistMarkup, /PENDING/);
+assert.match(checklistMarkup, /Execute Paper Trade/);
+assert.doesNotMatch(checklistMarkup, /EXECUTE_PAPER_TRADE/);
+assert.match(checklistMarkup, /This suggestion does not run a command/);
+assert.doesNotMatch(checklistMarkup, /execute-paper-trade/);
+const legacyChecklistMarkup = renderWeeklyRunChecklist(normalizeWeeklyRunReadiness({ ...weeklyRunReadiness(), current_run: null }));
+assert.match(legacyChecklistMarkup, /No durable weekly run is recorded/);
+const blockedChecklistMarkup = renderWeeklyRunChecklist(normalizeWeeklyRunReadiness(weeklyRunReadiness()));
+assert.match(blockedChecklistMarkup, /POST_APPROVAL_QUOTE_REQUIRED/);
+assert.match(blockedChecklistMarkup, /BLOCKED/);
+const holdChecklistMarkup = renderWeeklyRunChecklist(normalizeWeeklyRunReadiness(weeklyRunReadiness({ terminal: true })));
+assert.match(holdChecklistMarkup, /HOLD/);
+assert.match(holdChecklistMarkup, /TERMINAL/);
+const executedChecklistMarkup = renderWeeklyRunChecklist(normalizeWeeklyRunReadiness(weeklyRunReadiness({ executed: true })));
+assert.match(executedChecklistMarkup, /ALREADY_EXECUTED/);
+assert.match(executedChecklistMarkup, /TERMINAL/);
+
+const failedRefreshChecklist = weeklyRunReadiness();
+failedRefreshChecklist.steps[0] = { ...failedRefreshChecklist.steps[0], status: "FAILED", reason_code: "provider_unavailable", completed: false, terminal: false };
+const failedRefreshMarkup = renderWeeklyRunChecklist(normalizeWeeklyRunReadiness(failedRefreshChecklist));
+assert.match(failedRefreshMarkup, /BLOCKED/);
+assert.doesNotMatch(failedRefreshMarkup, /TERMINAL/);
+
+const completedDecisionChecklist = weeklyRunReadiness();
+completedDecisionChecklist.steps[3] = {
+  ...completedDecisionChecklist.steps[3],
+  reason_code: "BUY",
+  completed: true,
+};
+completedDecisionChecklist.steps[5] = {
+  ...completedDecisionChecklist.steps[5],
+  status: "APPROVED",
+  reason_code: "POST_APPROVAL_QUOTE_REQUIRED",
+  completed: true,
+};
+const completedDecisionMarkup = renderWeeklyRunChecklist(normalizeWeeklyRunReadiness(completedDecisionChecklist));
+assert.match(completedDecisionMarkup, /Value Manager decision and validation<\/strong><p>PASSED · BUY<\/p><\/div><span class="checklist-status">DONE/);
+assert.match(completedDecisionMarkup, /Human approval<\/strong><p>APPROVED · POST_APPROVAL_QUOTE_REQUIRED<\/p><\/div><span class="checklist-status">DONE/);
+assert.doesNotMatch(completedDecisionMarkup, /paper_execution/);
 
 const dashboardView = normalizeDashboard(dashboard());
 assert.equal(dashboardView.portfolio.totalValue, "1120");
@@ -183,6 +256,7 @@ const renderDecisionCenter = async (rawDecision, label, dashboardPayload = dashb
       "/decisions": history(),
       "/portfolio": portfolio(),
       "/performance": dashboard().performance,
+      "/weekly-run/readiness": weeklyRunReadiness(),
     };
     if (path === "/price-refresh/latest") return { status: 404, ok: false, json: async () => null };
     return { status: 200, ok: true, json: async () => payloads[path] };
@@ -493,6 +567,7 @@ globalThis.fetch = async (url) => {
     "/decisions": { entries_newest_first: [], chart_points_oldest_first: [] },
     "/portfolio": portfolio(),
     "/performance": dashboard().performance,
+    "/weekly-run/readiness": weeklyRunReadiness(),
   };
   return { status: 200, ok: true, json: async () => payloads[path] };
 };
