@@ -16,6 +16,8 @@ from agentic_portfolio_lab.domain.performance import BenchmarkPerformanceHistory
 from agentic_portfolio_lab.domain.portfolio import SecurityIdentity
 from agentic_portfolio_lab.domain.benchmark_fulfillment import PassiveIndexFulfillment
 from agentic_portfolio_lab.domain.research import ResearchBatch
+from agentic_portfolio_lab.domain.execution_check import ExecutionSafetyCheck
+from agentic_portfolio_lab.domain.policy import CurrentPolicyReference
 from agentic_portfolio_lab.domain.screening import ScreeningRun
 from agentic_portfolio_lab.domain.valuation import PriceObservation
 from agentic_portfolio_lab.application.research_selection import latest_authoritative_research_batch
@@ -43,6 +45,11 @@ from .models import (
     WeeklyRunReadinessResponse,
     WeeklyRunResponse,
     ReadinessBlockerResponse,
+    DecisionCycleAuditResponse,
+    ExecutionSafetyCheckResponse,
+    PolicyEvaluationResponse,
+    ValidationResponse,
+    ValidationRuleResponse,
 )
 
 
@@ -73,6 +80,10 @@ class MvpReadStateSnapshot:
     price_observations: tuple[PriceObservation, ...] = ()
     latest_price_refresh_operation: object | None = None
     reviewer_results: tuple[ReviewerResult, ...] = ()
+    journal_entries: tuple[DecisionJournalEntry, ...] = ()
+    approvals: tuple[DecisionApproval, ...] = ()
+    executions: tuple = ()
+    execution_checks: tuple[ExecutionSafetyCheck, ...] = ()
     run_id: UUID | None = None
     run_status: str | None = None
     run_initialized_at: datetime | None = None
@@ -113,6 +124,10 @@ class MvpReadState(Protocol):
     price_observations: tuple[PriceObservation, ...]
     latest_price_refresh_operation: object | None
     reviewer_results: tuple[ReviewerResult, ...]
+    journal_entries: tuple[DecisionJournalEntry, ...]
+    approvals: tuple[DecisionApproval, ...]
+    executions: tuple
+    execution_checks: tuple[ExecutionSafetyCheck, ...]
 
 
 class LatestResourceNotFound(ValueError):
@@ -121,6 +136,14 @@ class LatestResourceNotFound(ValueError):
     def __init__(self, resource: str) -> None:
         super().__init__(f"no latest {resource} is available")
         self.resource = resource
+
+
+class DecisionCycleNotFound(ValueError):
+    """The requested cycle has no canonical persisted decision journal."""
+
+    def __init__(self, decision_cycle_id: UUID) -> None:
+        super().__init__(f"decision cycle {decision_cycle_id} was not found")
+        self.decision_cycle_id = decision_cycle_id
 
 
 class MvpQueryService:
@@ -241,13 +264,139 @@ class MvpQueryService:
             raise ValueError("decision cycle has ambiguous reviewer artifacts")
         return matches[0] if matches else None
 
+    @staticmethod
+    def _one_or_none(items: tuple, *, label: str):
+        if len(items) > 1:
+            raise ValueError(f"decision cycle has ambiguous {label} artifacts")
+        return items[0] if items else None
+
+    def decision_cycle_audit(self, decision_cycle_id: UUID) -> DecisionCycleAuditResponse:
+        """Compose only the exact persisted lineage for one decision cycle."""
+        journals = tuple(item for item in getattr(self._state, "journal_entries", ()) if item.decision_cycle_id == decision_cycle_id)
+        if not journals:
+            # Pre-aggregate documents may have the canonical journal only in
+            # their immutable history artifact.
+            journals = tuple(item.journal_entry for item in self._state.history_entries if item.journal_entry.decision_cycle_id == decision_cycle_id)
+        if not journals and self._state.latest_journal_entry is not None and self._state.latest_journal_entry.decision_cycle_id == decision_cycle_id:
+            journals = (self._state.latest_journal_entry,)
+        journal = self._one_or_none(journals, label="journal")
+        if journal is None:
+            raise DecisionCycleNotFound(decision_cycle_id)
+        history_journals = tuple(item.journal_entry for item in self._state.history_entries if item.journal_entry.decision_cycle_id == decision_cycle_id)
+        history_journal = self._one_or_none(history_journals, label="history journal")
+        if history_journal is not None and history_journal is not journal:
+            raise ValueError("history journal must reference the exact canonical journal")
+
+        batches = tuple(item for item in getattr(self._state, "research_batches", ()) if item.batch_id == journal.research_batch_id)
+        batch = self._one_or_none(batches, label="research batch")
+        if batch is None:
+            batch = journal.decision_result.context.research_batch
+        elif batch.decision_cycle_id != decision_cycle_id or batch != journal.decision_result.context.research_batch:
+            raise ValueError("decision cycle research batch must match its exact journal lineage")
+
+        approvals = tuple(item for item in getattr(self._state, "approvals", ()) if item.decision_cycle_id == decision_cycle_id)
+        if not approvals:
+            approvals = tuple(item.approval for item in self._state.history_entries if item.journal_entry is journal and item.approval is not None)
+        approval = self._one_or_none(approvals, label="human decision")
+        history_approval = self._one_or_none(tuple(item.approval for item in self._state.history_entries if item.journal_entry is journal and item.approval is not None), label="history human decision")
+        if approval is not None and history_approval is not None and history_approval is not approval:
+            raise ValueError("history human decision must reference the exact canonical approval")
+        if approval is not None and approval.journal_entry is not journal:
+            raise ValueError("human decision must reference the exact canonical journal")
+        execution = self._one_or_none(tuple(item for item in getattr(self._state, "executions", ()) if item.decision_cycle_id == decision_cycle_id), label="execution")
+        if execution is not None and (approval is None or execution.approval is not approval):
+            raise ValueError("execution must reference the exact canonical human decision")
+        executed_trade = None if execution is None else execution.executed_trade
+        if executed_trade is None:
+            history_trades = tuple(item.executed_trade for item in self._state.history_entries if item.journal_entry is journal and item.executed_trade is not None)
+            executed_trade = self._one_or_none(history_trades, label="history execution")
+        cycle_checks = tuple(
+            item for item in getattr(self._state, "execution_checks", ())
+            if item.decision_cycle_id == decision_cycle_id
+        )
+        # A failed revalidation is durable evidence and a later retry may
+        # legitimately succeed.  An execution identifies the exact check that
+        # authorized it, so select that immutable record rather than treating
+        # all prior attempts as ambiguity.
+        if execution is not None:
+            referenced_check_id = execution.executed_trade.execution_check_id
+            check = self._one_or_none(
+                tuple(item for item in cycle_checks if item.check_id == referenced_check_id),
+                label="execution-referenced execution safety check",
+            )
+        else:
+            check = self._one_or_none(cycle_checks, label="execution safety check")
+        if check is not None and (approval is None or check.approval is not approval):
+            raise ValueError("execution safety check must reference the exact canonical human decision")
+        if isinstance(journal.policy_reference, CurrentPolicyReference) and execution is not None:
+            if (
+                check is None or check.check_id != execution.executed_trade.execution_check_id or not check.passed
+                or check.execution_observation != execution.execution_observation
+                or check.checked_at != execution.executed_trade.executed_at
+            ):
+                raise ValueError("current-policy execution must link its exact passed execution safety check")
+        elif execution is not None and check is not None:
+            raise ValueError("legacy execution must not have an execution safety check")
+
+        reviewer = self._reviewer_for(journal)
+        if reviewer is not None and (
+            reviewer.context.decision_result != journal.decision_result
+            or reviewer.context.risk_validation_result != journal.risk_validation_result
+            or reviewer.context.policy_reference != journal.policy_reference
+        ):
+            raise ValueError("reviewer result must retain the exact canonical journal lineage")
+        memo = decision_memo_response(
+            journal, approval, executed_trade,
+            price_observations=self._state.price_observations, reviewer_result=reviewer,
+        )
+        return DecisionCycleAuditResponse(
+            decision_cycle_id=str(decision_cycle_id),
+            research=research_batch_response(batch, self._screening_run_for(batch)), decision=memo,
+            reviewer=memo.reviewer,
+            approval=memo.approval,
+            execution=memo.execution,
+            execution_safety_check_id=None if check is None else str(check.check_id),
+            execution_safety_check=None if check is None else self._execution_safety_check_response(check),
+        )
+
+    @staticmethod
+    def _execution_safety_check_response(check: ExecutionSafetyCheck) -> ExecutionSafetyCheckResponse:
+        validation = check.safety_validation
+        return ExecutionSafetyCheckResponse(
+            check_id=str(check.check_id), decision_cycle_id=str(check.decision_cycle_id), checked_at=check.checked_at.isoformat(),
+            passed=check.passed, policy_lineage_matches=check.policy_lineage_matches,
+            policy_lineage_failure_reason=check.policy_lineage_failure_reason,
+            validation=ValidationResponse(status=validation.status.value, validation_timestamp=validation.validation_timestamp.isoformat(), rules=tuple(
+                ValidationRuleResponse(rule_id=rule.rule_id, status=rule.status.value, reason=rule.reason,
+                    actual_value=None if rule.actual_value is None else str(rule.actual_value),
+                    allowed_threshold=None if rule.allowed_threshold is None else str(rule.allowed_threshold),
+                    layer=rule.layer.value, policy_version=rule.policy_version, input_references=tuple(rule.input_references))
+                for rule in validation.rule_results),
+                validated_trade_id=None if validation.validated_trade is None else str(validation.validated_trade.validated_trade_id),
+                trade_proposal_id=None if validation.validated_trade is None else str(validation.validated_trade.trade_proposal_id)),
+            execution_observation_at=None if check.execution_observation is None else check.execution_observation.observed_at.isoformat(),
+            policy_evaluation=PolicyEvaluationResponse(
+                policy_kind=check.policy_reference.kind.value,
+                investment_constitution_version=check.policy_reference.investment_constitution.constitution_version,
+                investment_constitution_hash=check.policy_reference.investment_constitution.content_hash,
+                system_safety_envelope_version=check.policy_reference.system_safety_envelope.system_safety_envelope_version.value,
+                system_safety_envelope_hash=check.policy_reference.system_safety_envelope.content_hash,
+                manager_risk_constitution_version=check.policy_reference.manager_risk_constitution.risk_constitution_version.value,
+                manager_risk_constitution_hash=check.policy_reference.manager_risk_constitution.content_hash,
+                mechanically_executable=check.passed,
+                advisory_findings=(),
+            ),
+        )
+
     def _screening_run_for(self, batch: ResearchBatch) -> ScreeningRun | None:
         if batch.screening_run_id is None:
             return None
         runs = tuple(getattr(self._state, "screening_runs", ()))
         matches = tuple(run for run in runs if run.screening_run_id == batch.screening_run_id)
-        if len(matches) != 1:
-            return None
+        if not matches:
+            raise ValueError("research batch references a missing screening run")
+        if len(matches) > 1:
+            raise ValueError("research batch references ambiguous screening runs")
         return matches[0]
 
     def research_latest(self) -> ResearchBatchResponse:

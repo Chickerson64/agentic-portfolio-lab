@@ -5,6 +5,8 @@ const {
   ApiError,
   ApiContractError,
   apiClient,
+  normalizeDecisionCycleAudit,
+  renderAudit,
   loadApplication,
   normalizeDashboard,
   normalizeDecision,
@@ -42,7 +44,7 @@ const recommendation = (action = "HOLD") => ({
   valuation: "Valuation context.", risks: ["Competition"], confidence_score: 80, evidence: [evidence()],
   why_not_spy: "Security-specific opportunity.", thesis_invalidation: ["Cash flow deteriorates"], review_triggers: ["Material earnings change"],
 });
-const validation = (tradeId = null) => ({ status: "PASSED", validation_timestamp: "2026-08-11T12:00:00+00:00", validated_trade_id: tradeId, rules: [{ rule_id: "RISK-1", status: "PASSED", reason: "Within policy", actual_value: null, allowed_threshold: null, layer: "SYSTEM_SAFETY", policy_version: "safety-v1", input_references: ["portfolio"] }] });
+const validation = (tradeId = null) => ({ status: "PASSED", validation_timestamp: "2026-08-11T12:00:00+00:00", validated_trade_id: tradeId, trade_proposal_id: tradeId === null ? null : "proposal-1", rules: [{ rule_id: "RISK-1", status: "PASSED", reason: "Within policy", actual_value: null, allowed_threshold: null, layer: "SYSTEM_SAFETY", policy_version: "safety-v1", input_references: ["portfolio"] }] });
 const policyEvaluation = ({ mechanicallyExecutable = true, advisoryFindings = [] } = {}) => ({
   policy_kind: "CURRENT", investment_constitution_version: "investment-v1", investment_constitution_hash: "investment-hash",
   system_safety_envelope_version: "safety-v1", system_safety_envelope_hash: "safety-hash",
@@ -202,6 +204,88 @@ assert.equal(holdView.executionReadiness.reasonCode, "HOLD");
 assert.equal(holdView.policyEvaluation.mechanicallyExecutable, true);
 assert.deepEqual(holdView.policyEvaluation.advisoryFindings, []);
 assert.equal(normalizeDecision(null), null);
+
+const auditPayload = ({ legacy = false, missingStages = false } = {}) => ({
+  decision_cycle_id: "cycle-1",
+  research: { ...research(), selected: [], screening_run_id: null, revision_of_decision_cycle_id: null },
+  decision: legacy ? {
+    ...decision({ action: "BUY", withReviewer: false, withApproval: false }),
+    policy_evaluation: {
+      policy_kind: "LEGACY_MECHANICAL", investment_constitution_version: null, investment_constitution_hash: null,
+      system_safety_envelope_version: null, system_safety_envelope_hash: null,
+      manager_risk_constitution_version: null, manager_risk_constitution_hash: null,
+      mechanically_executable: true, advisory_findings: [],
+    },
+  } : decision({ action: "BUY", withExecution: true }),
+  reviewer: missingStages ? null : { ...reviewer(), reviewer_version: "reviewer-v1", provider: "local-fake", model: "fake", response_id: "response-1", request_id: "request-1" },
+  approval: missingStages ? null : approval(),
+  execution: missingStages ? null : execution(),
+  execution_safety_check_id: missingStages ? null : "check-1",
+  execution_safety_check: missingStages ? null : {
+    check_id: "check-1", decision_cycle_id: "cycle-1", checked_at: "2026-08-11T12:30:00+00:00", passed: true,
+    policy_lineage_matches: true, policy_lineage_failure_reason: null,
+    validation: validation("execution-validated-1"), execution_observation_at: "2026-08-11T12:30:00+00:00",
+    policy_evaluation: policyEvaluation({ advisoryFindings: [materialAdvisory()] }),
+  },
+});
+
+assert.throws(
+  () => normalizeDecisionCycleAudit({ ...auditPayload(), decision_cycle_id: "wrong-cycle" }),
+  ApiContractError,
+);
+assert.throws(
+  () => normalizeDecisionCycleAudit({ ...auditPayload(), execution_safety_check_id: null }),
+  ApiContractError,
+);
+assert.throws(
+  () => normalizeDecisionCycleAudit({ ...auditPayload(), reviewer: { ...auditPayload().reviewer, decision: "REJECT" } }),
+  ApiContractError,
+);
+assert.throws(
+  () => normalizeDecisionCycleAudit({ ...auditPayload(), approval: { ...auditPayload().approval, decision: "REJECTED" } }),
+  ApiContractError,
+);
+assert.throws(
+  () => normalizeDecisionCycleAudit({ ...auditPayload(), execution: { ...auditPayload().execution, executed_trade_id: "wrong-execution" } }),
+  ApiContractError,
+);
+assert.throws(
+  () => normalizeDecisionCycleAudit({ ...auditPayload(), execution_safety_check: { ...auditPayload().execution_safety_check, validation: { ...auditPayload().execution_safety_check.validation, trade_proposal_id: undefined } } }),
+  ApiContractError,
+);
+assert.equal(normalizeDecisionCycleAudit(auditPayload()).executionSafetyCheck.validation.tradeProposalId, "proposal-1");
+
+let returnToHistory;
+const auditTarget = {
+  innerHTML: "",
+  querySelector: (selector) => selector === "[data-view-jump]" ? {
+    addEventListener: (_event, listener) => { returnToHistory = listener; },
+  } : null,
+};
+const activeViews = [];
+const auditSections = [
+  { id: "audit", classList: { toggle: (_name, active) => activeViews.push(["audit", active]) } },
+  { id: "history", classList: { toggle: (_name, active) => activeViews.push(["history", active]) } },
+];
+globalThis.document = {
+  querySelector: (selector) => selector === "#audit" ? auditTarget : null,
+  querySelectorAll: (selector) => selector === ".view" ? auditSections : [],
+};
+renderAudit(normalizeDecisionCycleAudit(auditPayload()), "history");
+assert.match(auditTarget.innerHTML, /Immutable audit detail/);
+assert.match(auditTarget.innerHTML, /check-1/);
+assert.match(auditTarget.innerHTML, /Manager Risk · advisory only/);
+assert.match(auditTarget.innerHTML, /simulated/);
+assert.equal(typeof returnToHistory, "function");
+returnToHistory();
+assert.deepEqual(activeViews.slice(-2), [["audit", false], ["history", true]]);
+renderAudit(normalizeDecisionCycleAudit(auditPayload({ legacy: true, missingStages: true })), "decision");
+assert.match(auditTarget.innerHTML, /Not reviewed/);
+assert.match(auditTarget.innerHTML, /No human decision/);
+assert.match(auditTarget.innerHTML, /No execution safety check/);
+assert.match(auditTarget.innerHTML, /No execution/);
+assert.match(auditTarget.innerHTML, /Not recorded for this legacy cycle/);
+delete globalThis.document;
 
 const advisoryPolicyView = normalizeDecision(decision({
   action: "BUY",

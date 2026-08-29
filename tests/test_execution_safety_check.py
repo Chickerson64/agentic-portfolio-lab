@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import pytest
 
+from agentic_portfolio_lab.api.queries import MvpQueryService
 from agentic_portfolio_lab.application.decision_commands import (
     DecisionApprovalService,
     RunValueManagerService,
@@ -29,7 +30,7 @@ from agentic_portfolio_lab.domain.recommendations import (
 )
 from agentic_portfolio_lab.domain.risk_validation import TwoLayerRiskEvaluator
 from agentic_portfolio_lab.domain.valuation import PortfolioValuation, PriceObservation
-from agentic_portfolio_lab.infrastructure.sqlite_local_state import SQLiteLocalRunStore
+from agentic_portfolio_lab.infrastructure.sqlite_local_state import SQLiteLocalRunStore, SQLiteMvpReadState
 
 
 UTC = timezone.utc
@@ -520,3 +521,102 @@ def test_legacy_execution_remains_compatible_without_execution_check(
 
     assert legacy_store.current.execution_checks == ()
     assert legacy_store.current.executions[0].executed_trade.execution_check_id is None
+
+
+def test_current_policy_audit_contains_the_exact_execution_check_and_policy_lineage(
+    current_policy_execution_fixture,
+) -> None:
+    fixture = current_policy_execution_fixture(target_weight=Decimal("0.25"))
+    ManagedPaperExecutionService(fixture.store).execute(
+        decision_cycle_id=fixture.journal.decision_cycle_id,
+        executed_at=fixture.executed_at,
+    )
+
+    audit = MvpQueryService(SQLiteMvpReadState(fixture.store)).decision_cycle_audit(
+        fixture.journal.decision_cycle_id
+    )
+    policy = fixture.journal.policy_reference
+    check = fixture.store.open_run().execution_checks[0]  # type: ignore[union-attr]
+
+    assert audit.decision.policy_evaluation.investment_constitution_version == policy.investment_constitution.constitution_version
+    assert audit.decision.policy_evaluation.investment_constitution_hash == policy.investment_constitution.content_hash
+    assert audit.decision.policy_evaluation.system_safety_envelope_version == policy.system_safety_envelope.system_safety_envelope_version.value
+    assert audit.decision.policy_evaluation.system_safety_envelope_hash == policy.system_safety_envelope.content_hash
+    assert audit.decision.policy_evaluation.manager_risk_constitution_version == policy.manager_risk_constitution.risk_constitution_version.value
+    assert audit.decision.policy_evaluation.manager_risk_constitution_hash == policy.manager_risk_constitution.content_hash
+    assert audit.decision.policy_evaluation.advisory_findings
+    assert audit.approval is not None and audit.approval.decision == "APPROVED"
+    assert audit.execution is not None and audit.execution.executed_trade_id == str(fixture.store.open_run().executions[0].executed_trade.executed_trade_id)  # type: ignore[union-attr]
+    assert audit.execution_safety_check_id == str(check.check_id)
+    assert audit.execution_safety_check is not None
+    assert audit.execution_safety_check.passed is True
+    assert audit.execution_safety_check.validation.validated_trade_id == str(check.safety_validation.validated_trade.validated_trade_id)
+    assert audit.execution_safety_check.validation.trade_proposal_id == str(check.safety_validation.validated_trade.trade_proposal_id)
+    assert audit.decision.execution_readiness.reason_code == "ALREADY_EXECUTED"
+
+
+def test_failed_execution_check_is_audited_without_execution_and_survives_restart(
+    current_policy_execution_fixture, monkeypatch
+) -> None:
+    fixture = current_policy_execution_fixture()
+    policy = fixture.journal.policy_reference
+    monkeypatch.setattr(
+        "agentic_portfolio_lab.application.managed_execution.load_active_value_policy",
+        lambda: replace(policy, manager_risk_constitution=replace(policy.manager_risk_constitution, loading_source="different")),
+    )
+    with pytest.raises(ManagedPaperExecutionError):
+        ManagedPaperExecutionService(fixture.store).execute(
+            decision_cycle_id=fixture.journal.decision_cycle_id, executed_at=fixture.executed_at,
+        )
+
+    before = MvpQueryService(SQLiteMvpReadState(fixture.store)).decision_cycle_audit(fixture.journal.decision_cycle_id)
+    after = MvpQueryService(SQLiteMvpReadState(SQLiteLocalRunStore(fixture.store._path))).decision_cycle_audit(fixture.journal.decision_cycle_id)
+
+    assert before == after
+    assert before.execution is None
+    assert before.execution_safety_check is not None
+    assert before.execution_safety_check.passed is False
+    assert before.execution_safety_check.policy_lineage_matches is False
+    assert before.execution_safety_check.policy_lineage_failure_reason is not None
+    # The failed attempt is evidence, not a new readiness rule: the existing
+    # readiness projection continues to report its normal approved-BUY state.
+    assert before.decision.execution_readiness.reason_code == "READY"
+
+
+def test_audit_uses_the_execution_referenced_check_after_a_failed_retry(
+    current_policy_execution_fixture, monkeypatch
+) -> None:
+    fixture = current_policy_execution_fixture()
+    policy = fixture.journal.policy_reference
+    monkeypatch.setattr(
+        "agentic_portfolio_lab.application.managed_execution.load_active_value_policy",
+        lambda: replace(
+            policy,
+            manager_risk_constitution=replace(
+                policy.manager_risk_constitution, loading_source="different"
+            ),
+        ),
+    )
+    with pytest.raises(ManagedPaperExecutionError):
+        ManagedPaperExecutionService(fixture.store).execute(
+            decision_cycle_id=fixture.journal.decision_cycle_id,
+            executed_at=fixture.executed_at,
+        )
+    monkeypatch.undo()
+
+    ManagedPaperExecutionService(fixture.store).execute(
+        decision_cycle_id=fixture.journal.decision_cycle_id,
+        executed_at=fixture.executed_at,
+    )
+
+    state = fixture.store.open_run()
+    assert state is not None and len(state.execution_checks) == 2
+    audit = MvpQueryService(SQLiteMvpReadState(fixture.store)).decision_cycle_audit(
+        fixture.journal.decision_cycle_id
+    )
+    assert audit.execution is not None
+    assert audit.execution_safety_check_id == str(
+        state.executions[0].executed_trade.execution_check_id
+    )
+    assert audit.execution_safety_check is not None
+    assert audit.execution_safety_check.passed is True

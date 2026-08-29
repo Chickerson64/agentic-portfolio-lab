@@ -21,6 +21,7 @@ from .models import (
     BenchmarkSnapshotResponse,
     DashboardResponse,
     DecisionMemoResponse,
+    DecisionCycleAuditResponse,
     HealthResponse,
     HistoryResponse,
     PerformanceResponse,
@@ -42,7 +43,7 @@ from .models import (
     ExecutePaperTradeResponse,
     security_response,
 )
-from .queries import LatestResourceNotFound, MvpQueryService, MvpReadState
+from .queries import DecisionCycleNotFound, LatestResourceNotFound, MvpQueryService, MvpReadState
 
 
 def _query_or_unavailable(query):
@@ -52,6 +53,11 @@ def _query_or_unavailable(query):
         raise HTTPException(
             status_code=404,
             detail={"code": "latest_resource_not_found", "message": str(error)},
+        ) from error
+    except DecisionCycleNotFound as error:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "decision_cycle_not_found", "message": str(error)},
         ) from error
     except (IndexError, ValueError) as error:
         raise HTTPException(status_code=503, detail=f"application state unavailable: {error}") from error
@@ -281,6 +287,10 @@ def create_router(
     @router.get("/decisions/latest", response_model=DecisionMemoResponse)
     def latest_decision() -> DecisionMemoResponse:
         return _query_or_unavailable(service().latest_decision)
+
+    @router.get("/decisions/{decision_cycle_id}/audit", response_model=DecisionCycleAuditResponse)
+    def decision_cycle_audit(decision_cycle_id: UUID) -> DecisionCycleAuditResponse:
+        return _query_or_unavailable(lambda: service().decision_cycle_audit(decision_cycle_id))
 
     @router.get("/decisions", response_model=HistoryResponse)
     def decisions() -> HistoryResponse:

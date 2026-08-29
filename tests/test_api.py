@@ -8,7 +8,9 @@ import sys
 from dataclasses import replace
 from datetime import timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 
 from agentic_portfolio_lab.api.app import create_app
@@ -58,6 +60,141 @@ def _client() -> TestClient:
 
 def _state() -> MvpReadStateSnapshot:
     return MvpReadStateSnapshot.from_dashboard_demo(build_demo_dashboard_data())
+
+
+def test_decision_cycle_audit_uses_the_referenced_research_and_explicitly_absent_stages() -> None:
+    state = _state()
+    journal = state.latest_journal_entry
+    assert journal is not None
+
+    audit = MvpQueryService(state).decision_cycle_audit(journal.decision_cycle_id)
+
+    assert audit.research.batch_id == journal.research_batch_id
+    assert audit.research.decision_cycle_id == str(journal.decision_cycle_id)
+    assert audit.decision.reviewer is not None
+    assert audit.execution_safety_check is None
+    assert audit.decision.execution is None
+    assert audit.decision.execution_readiness.reason_code == "HOLD"
+
+
+def test_decision_cycle_audit_endpoint_serializes_explicit_stage_sections() -> None:
+    state = _state()
+    journal = state.latest_journal_entry
+    assert journal is not None
+
+    response = TestClient(create_app(state=state)).get(f"/decisions/{journal.decision_cycle_id}/audit")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["decision_cycle_id"] == str(journal.decision_cycle_id)
+    assert body["research"]["batch_id"] == journal.research_batch_id
+    assert body["decision"]["journaled_at"] == journal.journaled_at.isoformat()
+    assert body["reviewer"] == body["decision"]["reviewer"]
+    assert body["approval"] == body["decision"]["approval"]
+    assert body["execution"] is None
+    assert body["execution_safety_check"] is None
+
+
+def test_decision_cycle_audit_returns_a_distinct_not_found_response() -> None:
+    response = TestClient(create_app(state=_state())).get(f"/decisions/{uuid4()}/audit")
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "decision_cycle_not_found"
+
+
+def test_decision_cycle_audit_keeps_an_older_cycle_bound_to_its_packet_and_evidence() -> None:
+    state = _state()
+    older = state.history_entries[0].journal_entry
+    exact_batch = older.decision_result.context.research_batch
+    newer_unrelated = replace(
+        state.latest_journal_entry.decision_result.context.research_batch,
+        batch_id="newer-unrelated-batch",
+        decision_cycle_id=uuid4(),
+        created_at=exact_batch.created_at + timedelta(days=1),
+    )
+
+    audit = MvpQueryService(replace(
+        state,
+        research_batches=(exact_batch, newer_unrelated),
+        journal_entries=(older, state.latest_journal_entry),
+    )).decision_cycle_audit(older.decision_cycle_id)
+
+    assert audit.research.batch_id == exact_batch.batch_id
+    assert audit.research.decision_cycle_id == str(older.decision_cycle_id)
+    assert audit.research.packets[0].packet_id == exact_batch.packets[0].packet_id
+    assert audit.research.packets[0].evidence[0].evidence_id == exact_batch.packets[0].evidence_items[0].evidence_id
+
+
+def test_decision_cycle_audit_fails_closed_for_duplicate_or_cross_cycle_lineage() -> None:
+    state = _state()
+    journal = state.latest_journal_entry
+    assert journal is not None
+
+    with pytest.raises(ValueError, match="ambiguous journal"):
+        MvpQueryService(replace(state, journal_entries=(journal, journal))).decision_cycle_audit(journal.decision_cycle_id)
+
+    foreign_batch = replace(
+        state.history_entries[0].journal_entry.decision_result.context.research_batch,
+        batch_id=journal.research_batch_id,
+    )
+    with pytest.raises(ValueError, match="research batch must match"):
+        MvpQueryService(replace(state, research_batches=(foreign_batch,))).decision_cycle_audit(journal.decision_cycle_id)
+
+
+def test_screening_lineage_fails_closed_when_a_referenced_run_is_missing_or_ambiguous() -> None:
+    state = _state()
+    batch = state.latest_journal_entry.decision_result.context.research_batch
+    referenced_batch = replace(batch, screening_run_id=uuid4())
+
+    with pytest.raises(ValueError, match="missing screening run"):
+        MvpQueryService(state)._screening_run_for(referenced_batch)
+
+    duplicate = SimpleNamespace(screening_run_id=referenced_batch.screening_run_id)
+    with pytest.raises(ValueError, match="ambiguous screening runs"):
+        MvpQueryService(replace(state, screening_runs=(duplicate, duplicate)))._screening_run_for(referenced_batch)
+
+
+def test_decision_cycle_audit_projects_absent_review_approval_and_rejected_readiness() -> None:
+    state = _state()
+    buy = replace(state.history_entries[0].journal_entry, reviewer_result=None)
+    base = replace(
+        state,
+        latest_journal_entry=buy,
+        latest_approval=None,
+        history_entries=(),
+        research_batches=(buy.decision_result.context.research_batch,),
+        reviewer_results=(),
+        journal_entries=(buy,),
+        approvals=(),
+        executions=(),
+        execution_checks=(),
+    )
+
+    pending = MvpQueryService(base).decision_cycle_audit(buy.decision_cycle_id)
+    rejected_approval = DecisionApproval(
+        buy, "local-fake", ApprovalDecision.REJECTED, buy.journaled_at + timedelta(minutes=1), "not approved"
+    )
+    rejected = MvpQueryService(replace(base, latest_approval=rejected_approval, approvals=(rejected_approval,))).decision_cycle_audit(buy.decision_cycle_id)
+
+    assert pending.reviewer is None and pending.approval is None and pending.execution is None
+    assert pending.execution_safety_check is None
+    assert pending.decision.execution_readiness.reason_code == "NOT_APPROVED"
+    assert rejected.approval is not None and rejected.approval.decision == "REJECTED"
+    assert rejected.decision.execution_readiness.reason_code == "REJECTED"
+
+
+def test_decision_cycle_audit_keeps_legacy_executed_buy_explicitly_without_a_check() -> None:
+    state = _state()
+    legacy_buy = state.history_entries[0].journal_entry
+    audit = MvpQueryService(replace(
+        state,
+        research_batches=(legacy_buy.decision_result.context.research_batch,),
+        journal_entries=(legacy_buy,),
+    )).decision_cycle_audit(legacy_buy.decision_cycle_id)
+
+    assert audit.execution is not None
+    assert audit.execution_safety_check_id is None
+    assert audit.execution_safety_check is None
 
 
 def test_workflow_checklist_is_ordered_deterministic_and_represents_hold() -> None:

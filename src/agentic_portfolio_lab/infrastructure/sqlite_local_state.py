@@ -559,6 +559,10 @@ class SQLiteMvpReadState:
             price_observations=state.price_observations,
             latest_price_refresh_operation=state.latest_price_refresh_operation,
             reviewer_results=state.reviewer_results,
+            journal_entries=state.journal_entries,
+            approvals=state.approvals,
+            executions=state.executions,
+            execution_checks=state.execution_checks,
             run_id=state.metadata.run_id,
             run_status=state.metadata.status,
             run_initialized_at=state.metadata.initialized_at,
@@ -611,3 +615,19 @@ class SQLiteMvpReadState:
     @property
     def research_batches(self):
         return self._state().research_batches
+
+    @property
+    def journal_entries(self):
+        return self._state().journal_entries
+
+    @property
+    def approvals(self):
+        return self._state().approvals
+
+    @property
+    def executions(self):
+        return self._state().executions
+
+    @property
+    def execution_checks(self):
+        return self._state().execution_checks
