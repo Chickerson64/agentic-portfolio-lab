@@ -256,6 +256,23 @@ main { width:min(1480px,100%); margin:0 auto; padding:34px 38px 60px; }
 .history-date strong { font-size:20px; font-weight:560; }
 .history-date span { color:var(--muted); font-size:8px; line-height:1.25; text-transform:uppercase; }
 .history-row code { max-width:140px; overflow:hidden; padding:5px 7px; color:var(--muted); background:var(--surface-soft); border-radius:5px; font-size:8px; text-overflow:ellipsis; white-space:nowrap; }
+.audit-launch { margin:-12px 0 18px; }
+.audit-history-button { white-space:nowrap; }
+.audit-grid,.audit-policy-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px; margin-top:18px; }
+.audit-grid>.surface { min-height:170px; }
+.audit-grid h2,.audit-policy-grid h2 { margin:5px 0 10px; font-size:17px; }
+.audit-grid p { line-height:1.55; }
+.audit-meta,.audit-list small { display:block; color:var(--muted); font-size:10px; line-height:1.5; overflow-wrap:anywhere; }
+.audit-fields { margin:14px 0 0; }
+.audit-fields div { display:grid; grid-template-columns:120px 1fr; gap:12px; padding:7px 0; border-top:1px solid var(--line); }
+.audit-fields dt { color:var(--muted); font-size:9px; font-weight:700; text-transform:uppercase; }
+.audit-fields dd { margin:0; font:11px ui-monospace,SFMono-Regular,Menlo,monospace; overflow-wrap:anywhere; }
+.audit-list { margin:12px 0 0; padding:0; list-style:none; }
+.audit-list li { padding:10px 0; border-top:1px solid var(--line); }
+.audit-list strong,.audit-list span { display:block; }
+.audit-list strong { font-size:11px; }
+.audit-list span { margin:4px 0; color:#4f5662; font:12px/1.45 Georgia,serif; }
+.missing-stage { padding:12px; color:var(--muted); background:var(--surface-soft); border:1px dashed var(--line-strong); border-radius:8px; font-weight:650; }
 
 .empty-state,.loading-state { padding:46px 30px; color:var(--muted); background:rgba(255,255,255,.5); border:1px dashed var(--line); border-radius:var(--radius); text-align:center; }
 .empty-state h1,.loading-state h1 { color:var(--ink); }
@@ -274,6 +291,7 @@ main { width:min(1480px,100%); margin:0 auto; padding:34px 38px 60px; }
   .command-block+.command-block { border-left:0; border-top:1px solid var(--line); }
   .metric-grid { grid-template-columns:repeat(2,1fr); }
   .lifecycle-grid { grid-template-columns:repeat(3,1fr); }
+  .audit-grid,.audit-policy-grid { grid-template-columns:1fr; }
   .lifecycle-grid div:nth-child(4) { border-left:0; border-top:1px solid var(--line); }
   .lifecycle-grid div:nth-child(5) { border-top:1px solid var(--line); }
 }

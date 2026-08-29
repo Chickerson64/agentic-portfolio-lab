@@ -128,6 +128,7 @@ class ValidationResponse(ApiModel):
     validation_timestamp: str
     rules: tuple[ValidationRuleResponse, ...]
     validated_trade_id: str | None
+    trade_proposal_id: str | None
 
 
 class AdvisoryFindingResponse(ApiModel):
@@ -167,6 +168,8 @@ class ReviewerResponse(ApiModel):
     reviewer_version: str | None
     provider: str | None
     model: str | None
+    response_id: str | None
+    request_id: str | None
     rationale: str | None
     findings: tuple[ReviewerFindingResponse, ...]
 
@@ -223,6 +226,36 @@ class DecisionMemoResponse(ApiModel):
     execution_readiness: ExecutionReadinessResponse
 
 
+class ExecutionSafetyCheckResponse(ApiModel):
+    """The durable System Safety check made at execution time."""
+
+    check_id: str
+    decision_cycle_id: str
+    checked_at: str
+    passed: bool
+    policy_lineage_matches: bool
+    policy_lineage_failure_reason: str | None
+    validation: ValidationResponse
+    execution_observation_at: str | None
+    policy_evaluation: PolicyEvaluationResponse
+
+
+class DecisionCycleAuditResponse(ApiModel):
+    """Read-only authoritative artifacts for one explicit decision cycle."""
+
+    decision_cycle_id: str
+    research: "ResearchBatchResponse"
+    decision: DecisionMemoResponse
+    # These repeat the compatible decision-memo projections as explicit audit
+    # stages.  A missing durable artifact is represented by null, never by a
+    # synthesized identifier or placeholder artifact.
+    reviewer: ReviewerResponse | None
+    approval: ApprovalResponse | None
+    execution: ExecutionResponse | None
+    execution_safety_check_id: str | None
+    execution_safety_check: ExecutionSafetyCheckResponse | None
+
+
 class MissingDataResponse(ApiModel):
     value: None = None
     reason: str
@@ -275,6 +308,7 @@ class ResearchBatchResponse(ApiModel):
     as_of_timestamp: str
     packets: tuple[ResearchPacketResponse, ...]
     screening_run_id: str | None = None
+    revision_of_decision_cycle_id: str | None = None
     selected: tuple[ScreeningSelectionResponse, ...] = ()
 
 
@@ -610,6 +644,8 @@ def _reviewer_response(journal: DecisionJournalEntry, reviewer: ReviewerResult |
         reviewer_version=None if reviewer.metadata is None else reviewer.metadata.reviewer_version,
         provider=None if reviewer.metadata is None else reviewer.metadata.provider,
         model=None if reviewer.metadata is None else reviewer.metadata.model,
+        response_id=None if reviewer.metadata is None else reviewer.metadata.response_id,
+        request_id=None if reviewer.metadata is None else reviewer.metadata.request_id,
         rationale=reviewer.rationale,
         findings=tuple(
             ReviewerFindingResponse(
@@ -733,6 +769,7 @@ def decision_memo_response(
                 for rule in validation.rule_results
             ),
             validated_trade_id=None if validation.validated_trade is None else str(validation.validated_trade.validated_trade_id),
+            trade_proposal_id=None if validation.validated_trade is None else str(validation.validated_trade.trade_proposal_id),
         ),
         policy_evaluation=_policy_evaluation_response(journal),
         reviewer=_reviewer_response(journal, reviewer_result),
@@ -841,6 +878,7 @@ def research_batch_response(
         as_of_timestamp=_timestamp(batch.as_of_timestamp),
         packets=tuple(_research_packet_response(packet) for packet in batch.packets),
         screening_run_id=None if batch.screening_run_id is None else str(batch.screening_run_id),
+        revision_of_decision_cycle_id=None if batch.revision_of_decision_cycle_id is None else str(batch.revision_of_decision_cycle_id),
         selected=selected,
     )
 

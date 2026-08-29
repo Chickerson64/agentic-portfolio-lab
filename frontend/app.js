@@ -145,6 +145,7 @@ function normalizeValidation(payload, context) {
     status: text(field(payload, "status", context), `${context}.status`),
     validationTimestamp: text(field(payload, "validation_timestamp", context), `${context}.validation_timestamp`),
     validatedTradeId: nullableText(field(payload, "validated_trade_id", context), `${context}.validated_trade_id`),
+    tradeProposalId: nullableText(field(payload, "trade_proposal_id", context), `${context}.trade_proposal_id`),
     rules: list(field(payload, "rules", context), `${context}.rules`).map((rule, index) => {
       const item = `${context}.rules[${index}]`;
       return {
@@ -316,6 +317,66 @@ export function normalizeDecision(payload) {
     execution: normalizeExecution(field(payload, "execution", context), `${context}.execution`),
     executionReadiness: normalizeExecutionReadiness(field(payload, "execution_readiness", context), `${context}.execution_readiness`),
   };
+}
+
+// Audit records are immutable evidence, so this intentionally accepts no
+// compatibility defaults.  A partial record must be visible as an API failure,
+// never as an invented stage or value in the operator interface.
+function normalizeAuditReviewer(payload, context) {
+  if (payload === null) return null;
+  const reviewer = normalizeReviewer(payload, context);
+  return {
+    ...reviewer,
+    reviewerVersion: nullableText(field(payload, "reviewer_version", context), `${context}.reviewer_version`),
+    provider: nullableText(field(payload, "provider", context), `${context}.provider`),
+    model: nullableText(field(payload, "model", context), `${context}.model`),
+    responseId: nullableText(field(payload, "response_id", context), `${context}.response_id`),
+    requestId: nullableText(field(payload, "request_id", context), `${context}.request_id`),
+  };
+}
+
+function normalizeExecutionSafetyCheck(payload, context) {
+  if (payload === null) return null;
+  return {
+    checkId: text(field(payload, "check_id", context), `${context}.check_id`),
+    decisionCycleId: text(field(payload, "decision_cycle_id", context), `${context}.decision_cycle_id`),
+    checkedAt: text(field(payload, "checked_at", context), `${context}.checked_at`),
+    passed: boolean(field(payload, "passed", context), `${context}.passed`),
+    policyLineageMatches: boolean(field(payload, "policy_lineage_matches", context), `${context}.policy_lineage_matches`),
+    policyLineageFailureReason: nullableText(field(payload, "policy_lineage_failure_reason", context), `${context}.policy_lineage_failure_reason`),
+    validation: normalizeValidation(field(payload, "validation", context), `${context}.validation`),
+    executionObservationAt: nullableText(field(payload, "execution_observation_at", context), `${context}.execution_observation_at`),
+    policyEvaluation: normalizePolicyEvaluation(field(payload, "policy_evaluation", context), `${context}.policy_evaluation`),
+  };
+}
+
+export function normalizeDecisionCycleAudit(payload) {
+  const context = "decision cycle audit";
+  record(payload, context);
+  const researchPayload = field(payload, "research", context);
+  // Require fields which are optional only for compatibility on older general
+  // research endpoints; the audit endpoint must provide its complete record.
+  field(researchPayload, "selected", `${context}.research`);
+  field(researchPayload, "screening_run_id", `${context}.research`);
+  field(researchPayload, "revision_of_decision_cycle_id", `${context}.research`);
+  const audit = {
+    decisionCycleId: text(field(payload, "decision_cycle_id", context), `${context}.decision_cycle_id`),
+    research: normalizeResearch(researchPayload),
+    decision: normalizeDecision(field(payload, "decision", context)),
+    reviewer: normalizeAuditReviewer(field(payload, "reviewer", context), `${context}.reviewer`),
+    approval: normalizeApproval(field(payload, "approval", context), `${context}.approval`),
+    execution: normalizeExecution(field(payload, "execution", context), `${context}.execution`),
+    executionSafetyCheckId: nullableText(field(payload, "execution_safety_check_id", context), `${context}.execution_safety_check_id`),
+    executionSafetyCheck: normalizeExecutionSafetyCheck(field(payload, "execution_safety_check", context), `${context}.execution_safety_check`),
+  };
+  if (audit.research.decisionCycleId !== audit.decisionCycleId || audit.decision.decisionCycleId !== audit.decisionCycleId) contractFailure(context, "research and decision records for the requested decision cycle");
+  const { reviewerVersion, provider, model, responseId, requestId, ...reviewerStage } = audit.reviewer ?? {};
+  if ((audit.reviewer === null) !== (audit.decision.reviewer === null) || (audit.reviewer !== null && JSON.stringify(reviewerStage) !== JSON.stringify(audit.decision.reviewer))) contractFailure(context, "a reviewer stage matching the decision memo");
+  if (JSON.stringify(audit.approval) !== JSON.stringify(audit.decision.approval)) contractFailure(context, "a human decision stage matching the decision memo");
+  if (JSON.stringify(audit.execution) !== JSON.stringify(audit.decision.execution)) contractFailure(context, "an execution stage matching the decision memo");
+  if ((audit.executionSafetyCheckId === null) !== (audit.executionSafetyCheck === null)) contractFailure(context, "matching execution safety check identifier and record");
+  if (audit.executionSafetyCheck && (audit.executionSafetyCheck.checkId !== audit.executionSafetyCheckId || audit.executionSafetyCheck.decisionCycleId !== audit.decisionCycleId)) contractFailure(context, "an execution safety check for the requested decision cycle");
+  return audit;
 }
 
 // This is deliberately a direct rendering of the backend contract, not an
@@ -552,7 +613,7 @@ function chart(points) {
   return `<div class="chart-wrap"><svg class="chart" viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="Managed and SPY return history">${[20,40,60,80].map((y) => `<line class="grid-line" x1="0" y1="${y}" x2="100" y2="${y}"/>`).join("")}<path class="benchmark" d="${path("benchmarkReturn")}"/><path class="managed" d="${path("managedReturn")}"/></svg><div class="chart-labels"><span>${esc(dateTime(points[0].timestamp))}</span><span>${esc(dateTime(points.at(-1).timestamp))}</span></div></div>`;
 }
 
-function nav() { return `<section class="view active" id="overview"></section><section class="view" id="decision"></section><section class="view" id="research"></section><section class="view" id="portfolio"></section><section class="view" id="history"></section>`; }
+function nav() { return `<section class="view active" id="overview"></section><section class="view" id="decision"></section><section class="view" id="research"></section><section class="view" id="portfolio"></section><section class="view" id="history"></section><section class="view" id="audit"></section>`; }
 function checklistState(step) {
   if (step.terminal) return "terminal";
   if (step.completed) return "done";
@@ -652,6 +713,7 @@ function renderDecision(state) {
     ? `<article class="surface command-card"><span class="kicker">Execution readiness</span><h2>Ready for paper execution</h2><p class="muted">The backend will select the eligible persisted quote and calculate the simulated fill.</p><div class="command-form"><div class="field wide"><div class="field-label"><label for="execution-executed-at">Execution timestamp</label><button type="button" class="now-button" data-now-target="execution-executed-at">Use current time</button></div><input id="execution-executed-at" type="datetime-local" aria-label="Execution timestamp" required></div><button class="refresh-button" id="execute-paper-trade" type="button">Execute Paper Trade</button></div></article>`
     : `<article class="surface command-card"><div class="surface-head"><div><span class="kicker">Execution readiness</span><h2>${esc(readiness.reasonCode)}</h2></div><span class="chip ${readiness.reasonCode === "HOLD" ? "hold" : ""}">${esc(readiness.executable ? "READY" : "NOT EXECUTABLE")}</span></div><p class="muted">Approval: ${esc(readiness.approvalStatus ?? "Not recorded")} · Validation: ${esc(readiness.validationStatus)}</p></article>`;
   target.innerHTML = `<div class="page-heading"><div><span class="kicker">Decision center</span><h1>Verified decision lifecycle</h1><p>Recommendation, deterministic validation, review, and approval are separate artifacts.</p></div><div class="cycle-id"><span class="kicker">Decision cycle</span><strong>${esc(decision.decisionCycleId)}</strong><small>${esc(decision.constitutionVersion)}</small></div></div><article class="decision-hero"><div class="decision-main"><div class="recommendation-top"><i class="symbol">${esc(initials(r.ticker))}</i><div><span class="kicker">Latest AI recommendation</span><h2>${esc(r.action)} ${esc(r.ticker)}</h2><p>${esc(r.valuation)}</p></div><span class="chip ${r.action === "BUY" ? "buy" : "hold"}">${esc(r.action)}</span></div><p class="thesis">${esc(r.decisionRationale)}</p><div class="facts"><div><span>Target weight</span><strong>${esc(percent(r.targetWeight))}</strong></div><div><span>Confidence</span><strong>${esc(r.confidenceScore)}/100</strong></div><div><span>Execution</span><strong>${esc(execution ? `${quantity(execution.executedQuantity)} shares` : "None")}</strong></div></div><section class="section-card"><span class="kicker">Why not SPY</span><p>${esc(r.whyNotSpy)}</p></section></div><aside class="confidence"><span class="kicker">Evidence confidence</span><div><strong class="value">${esc(r.confidenceScore)}<small>/100</small></strong></div><div class="score-track"><i style="width:${Math.max(0, Math.min(100, r.confidenceScore))}%"></i></div><p>${esc(r.evidence.length)} cited evidence item(s)</p><p class="muted">${esc(reviewer ? `${reviewer.findings.length} reviewer finding(s)` : "Reviewer absent")}</p></aside></article><section class="lifecycle"><div class="surface-head"><div><span class="kicker">Verified lifecycle</span><h2>How this became portfolio state</h2></div><span class="chip">${esc(approval?.decision ?? "IN PROGRESS")}</span></div><div class="lifecycle-grid">${lifecycle}</div></section>${policyPanels}<div class="two-col"><article class="surface"><span class="kicker">Thesis and risks</span><h2>Decision memo</h2><p class="thesis">${esc(r.investmentThesis ?? "No investment thesis — HOLD")}</p><h3>Risks</h3><ul class="decision-notes">${r.risks.map((risk) => `<li>${esc(risk)}</li>`).join("")}</ul></article><article class="surface"><span class="kicker">Execution lineage</span><h2>${execution ? "Simulated execution" : "No execution"}</h2>${execution ? `<p>${esc(execution.action)} ${esc(quantity(execution.executedQuantity))} ${esc(execution.security.ticker)} @ ${esc(money(execution.executionPrice, execution.currency))}</p><small class="muted">Executed trade ${esc(execution.executedTradeId)} · validated trade ${esc(execution.validatedTradeId)}</small>` : `<p class="muted">${r.action === "HOLD" ? "HOLD correctly produced no execution." : "No execution artifact is available."}</p>`}</article></div>${reviewerControl}${runControl}${outcomeControls}${executionControl}`;
+  target.innerHTML += `<div class="audit-launch"><button class="quiet-button outline" data-open-audit="${esc(decision.decisionCycleId)}" data-audit-return="decision">Open immutable audit detail →</button></div>`;
   document.querySelector("#run-value-manager")?.addEventListener("click", () => runValueManager());
   document.querySelector("#run-reviewer")?.addEventListener("click", () => runReviewer({ decision }));
   const outcome = (decisionName) => recordDecisionOutcome({ decision, decisionName });
@@ -721,14 +783,47 @@ function renderHistory(state) {
   const target = document.querySelector("#history"), history = state.history;
   target.innerHTML = `<div class="page-heading"><div><span class="kicker">Immutable lineage</span><h1>Decision & portfolio history</h1><p>Every state change remains linked to its decision cycle and execution artifacts.</p></div><div class="cycle-id"><span class="kicker">Visible history</span><strong>${esc(history.entries.length)} entries</strong><small>Newest first</small></div></div><div class="history-list">${history.entries.map((entry) => {
     const date = dateParts(entry.decisionTimestamp);
-    return `<article class="history-row"><time class="history-date"><strong>${esc(date.day)}</strong><span>${esc(date.month)}<br>${esc(date.year)}</span></time><i class="symbol">${esc(entry.action === "HOLD" ? "—" : initials(entry.ticker))}</i><div class="history-main"><span class="kicker">${esc(entry.lifecycleStatus)}</span><strong>${esc(entry.action)} ${esc(entry.ticker)}</strong><small>Reviewer: ${esc(entry.reviewerOutcome)} · Human approval: ${esc(entry.approvalOutcome)} · Target: ${esc(entry.targetWeight)}</small>${entry.execution.executedTradeId ? `<small>Execution ${esc(entry.execution.executedTradeId)} → validated ${esc(entry.execution.validatedTradeId)} · ${esc(quantity(entry.execution.quantity))} ${esc(entry.execution.security.ticker)} @ ${esc(money(entry.execution.executionPrice, entry.execution.security.currency))}</small>` : ""}</div><code title="${esc(entry.decisionCycleId)}">${esc(entry.decisionCycleId)}</code></article>`;
+    return `<article class="history-row"><time class="history-date"><strong>${esc(date.day)}</strong><span>${esc(date.month)}<br>${esc(date.year)}</span></time><i class="symbol">${esc(entry.action === "HOLD" ? "—" : initials(entry.ticker))}</i><div class="history-main"><span class="kicker">${esc(entry.lifecycleStatus)}</span><strong>${esc(entry.action)} ${esc(entry.ticker)}</strong><small>Reviewer: ${esc(entry.reviewerOutcome)} · Human approval: ${esc(entry.approvalOutcome)} · Target: ${esc(entry.targetWeight)}</small>${entry.execution.executedTradeId ? `<small>Execution ${esc(entry.execution.executedTradeId)} → validated ${esc(entry.execution.validatedTradeId)} · ${esc(quantity(entry.execution.quantity))} ${esc(entry.execution.security.ticker)} @ ${esc(money(entry.execution.executionPrice, entry.execution.security.currency))}</small>` : ""}</div><button class="quiet-button outline audit-history-button" data-open-audit="${esc(entry.decisionCycleId)}" data-audit-return="history">Audit detail →</button><code title="${esc(entry.decisionCycleId)}">${esc(entry.decisionCycleId)}</code></article>`;
   }).join("") || "<section class=empty-state>No decision history is available.</section>"}</div>`;
+}
+function auditRules(rules) {
+  return rules.length ? `<ul class="audit-list">${rules.map((rule) => `<li><strong>${esc(rule.ruleId)} · ${esc(rule.status)}</strong><span>${esc(rule.reason)}</span><small>Actual: ${esc(rule.actualValue)} · Threshold: ${esc(rule.allowedThreshold)} · Policy: ${esc(rule.policyVersion)} · Inputs: ${esc(rule.inputReferences.join(", "))}</small></li>`).join("")}</ul>` : `<p class="muted">No recorded rule results.</p>`;
+}
+function auditPolicy(policy, validation, { executionCheck = false } = {}) {
+  const recorded = policy.systemSafetyEnvelopeVersion !== null;
+  const safety = recorded ? `<p class="audit-meta">${esc(policy.systemSafetyEnvelopeVersion)} · ${esc(policy.systemSafetyEnvelopeHash)} · ${esc(validation.status)}</p>${auditRules(validation.rules)}` : `<p class="muted">Not recorded for this legacy cycle.</p>`;
+  const manager = policy.managerRiskConstitutionVersion === null ? `<p class="muted">Not recorded for this legacy cycle.</p>` : (policy.advisoryFindings.length ? `<ul class="audit-list">${policy.advisoryFindings.map((finding) => `<li><strong>${esc(finding.findingId)} · ${esc(finding.severity)}</strong><span>${esc(finding.reason)}</span><small>Actual: ${esc(finding.actualValue)} · Guidance: ${esc(finding.guidanceValue)} · Inputs: ${esc(finding.inputReferences.join(", "))}</small></li>`).join("")}</ul>` : `<p class="muted">No advisory findings recorded.</p>`);
+  return `<div class="audit-policy-grid"><article class="surface policy-panel system-safety"><span class="kicker">System Safety · deterministic / hard</span><h2>${executionCheck ? "Execution safety result" : "Decision safety result"}</h2>${safety}</article><article class="surface policy-panel manager-risk"><span class="kicker">Manager Risk · advisory only</span><h2>Advisory assessment</h2>${manager}</article></div>`;
+}
+export function renderAudit(audit, returnView) {
+  const target = document.querySelector("#audit"), { decision, research } = audit, r = decision.recommendation;
+  const reviewer = audit.reviewer ? `<p class="audit-meta">${esc(audit.reviewer.decision)} · ${esc(audit.reviewer.reviewedAt)} · ${esc(audit.reviewer.reviewerId)}</p><p>${esc(audit.reviewer.rationale)}</p>${audit.reviewer.findings.length ? `<ul class="audit-list">${audit.reviewer.findings.map((finding) => `<li><strong>${esc(finding.severity)} · ${esc(finding.category)}</strong><span>${esc(finding.message)}</span><small>Evidence: ${esc(finding.relatedEvidenceIds.join(", "))} · Recommendation field: ${esc(finding.relatedRecommendationField)} · Would change: ${esc(finding.whatWouldChange)}</small></li>`).join("")}</ul>` : `<p class="muted">No reviewer findings recorded.</p>`}` : `<p class="missing-stage">Not reviewed</p>`;
+  const approval = audit.approval ? `<p class="audit-meta">${esc(audit.approval.decision)} · ${esc(audit.approval.decisionMakerId)} · ${esc(audit.approval.decidedAt)}</p><p>${esc(audit.approval.comment)}</p>` : `<p class="missing-stage">No human decision</p>`;
+  const readiness = decision.executionReadiness;
+  const check = audit.executionSafetyCheck ? `<p class="audit-meta">${esc(audit.executionSafetyCheck.checkId)} · ${esc(audit.executionSafetyCheck.checkedAt)} · ${esc(audit.executionSafetyCheck.passed)} · lineage match: ${esc(audit.executionSafetyCheck.policyLineageMatches)}</p><p>${esc(audit.executionSafetyCheck.policyLineageFailureReason)}</p>${auditPolicy(audit.executionSafetyCheck.policyEvaluation, audit.executionSafetyCheck.validation, { executionCheck: true })}` : `<p class="missing-stage">No execution safety check</p>`;
+  const execution = audit.execution ? `<p class="audit-meta">${esc(audit.execution.executedTradeId)} · ${esc(audit.execution.executedAt)} · ${esc(audit.execution.executionSource)}</p><p>${esc(audit.execution.action)} ${esc(audit.execution.executedQuantity)} ${esc(audit.execution.security.ticker)} @ ${esc(audit.execution.executionPrice)} ${esc(audit.execution.currency)}</p><small class="muted">Validated trade: ${esc(audit.execution.validatedTradeId)} · Notional: ${esc(audit.execution.executedNotional)} · Provider: ${esc(audit.execution.sourceProviderIdentity)} · ${esc(audit.execution.marketDate)} · ${esc(audit.execution.priceConvention)}</small>` : `<p class="missing-stage">No execution</p>`;
+  target.innerHTML = `<div class="page-heading"><div><span class="kicker">Immutable audit detail</span><h1>Decision-cycle evidence</h1><p>Backend-provided records only. This view performs no policy, readiness, or execution calculation.</p></div><div class="cycle-id"><span class="kicker">Decision cycle</span><strong>${esc(audit.decisionCycleId)}</strong><small>${esc(decision.journaledAt)}</small></div></div><div class="audit-launch"><button class="quiet-button outline" data-view-jump="${esc(returnView)}">← Return to ${esc(returnView)}</button></div><section class="audit-grid"><article class="surface"><span class="kicker">Decision & recommendation</span><h2>${esc(r.action)} ${esc(r.ticker)}</h2><p>${esc(r.decisionRationale)}</p><dl class="audit-fields"><div><dt>Target weight</dt><dd>${esc(r.targetWeight)}</dd></div><div><dt>Confidence</dt><dd>${esc(r.confidenceScore)}</dd></div><div><dt>Validation</dt><dd>${esc(decision.validation.status)}</dd></div><div><dt>Constitution</dt><dd>${esc(decision.constitutionVersion)}</dd></div></dl></article><article class="surface"><span class="kicker">Research</span><h2>${esc(research.batchId)}</h2><p class="audit-meta">${esc(research.createdAt)} · ${esc(research.asOfTimestamp)} · ${esc(research.screeningRunId)}</p><ul class="audit-list">${research.packets.map((packet) => `<li><strong>${esc(packet.ticker)} · ${esc(packet.packetId)}</strong><span>${esc(packet.companyName)}</span><small>Evidence: ${esc(packet.evidence.map((item) => item.evidenceId).join(", "))}</small></li>`).join("")}</ul></article></section>${auditPolicy(decision.policyEvaluation, decision.validation)}<section class="audit-grid"><article class="surface"><span class="kicker">AI Reviewer · advisory only</span><h2>Independent review</h2>${reviewer}</article><article class="surface"><span class="kicker">Human decision</span><h2>Approval gate</h2>${approval}</article><article class="surface"><span class="kicker">Readiness / execution check</span><h2>${esc(readiness.reasonCode)}</h2><p class="audit-meta">Executable: ${esc(readiness.executable)} · Approval: ${esc(readiness.approvalStatus)} · Validation: ${esc(readiness.validationStatus)}</p>${check}</article><article class="surface"><span class="kicker">Execution</span><h2>Simulated managed execution</h2>${execution}</article></section>`;
+  document.querySelectorAll(".view").forEach((section) => section.classList.toggle("active", section.id === "audit"));
+  document.querySelectorAll("[data-view]").forEach((node) => node.classList.remove("active"));
+  target.querySelector("[data-view-jump]")?.addEventListener("click", () => {
+    document.querySelectorAll(".view").forEach((section) => section.classList.toggle("active", section.id === returnView));
+    document.querySelectorAll("[data-view]").forEach((node) => node.classList.toggle("active", node.dataset.view === returnView));
+  });
+}
+function bindAuditLinks() {
+  document.querySelectorAll("[data-open-audit]").forEach((button) => button.addEventListener("click", async () => {
+    const target = document.querySelector("#audit");
+    target.innerHTML = `<section class="loading-state"><span class="spinner"></span><h1>Loading immutable audit detail</h1></section>`;
+    document.querySelectorAll(".view").forEach((section) => section.classList.toggle("active", section.id === "audit"));
+    try { renderAudit(normalizeDecisionCycleAudit(await apiClient.get(`/decisions/${encodeURIComponent(button.dataset.openAudit)}/audit`)), button.dataset.auditReturn); }
+    catch (error) { target.innerHTML = empty("Audit detail unavailable", error.message); }
+  }));
 }
 function empty(title, message) { return `<section class="empty-state"><span class="kicker">No data</span><h1>${esc(title)}</h1><p>${esc(message)}</p></section>`; }
 function render(state) {
   app.innerHTML = nav(); document.querySelector("#portfolio-name").textContent = state.dashboard.portfolio.portfolioName;
   document.querySelector("#health-status").textContent = refreshStatus || refreshSummary(state.priceRefresh) || `${state.health.stateMode} · ${state.health.persisted ? "persisted" : "in-memory"}${state.health.synthetic ? " · demo" : ""}`;
-  renderOverview(state); renderDecision(state); renderResearch(state); renderPortfolio(state); renderHistory(state); bindCurrentTimeButtons();
+  renderOverview(state); renderDecision(state); renderResearch(state); renderPortfolio(state); renderHistory(state); bindCurrentTimeButtons(); bindAuditLinks();
   document.querySelectorAll("[data-view],[data-view-jump]").forEach((button) => button.addEventListener("click", () => { const view = button.dataset.view || button.dataset.viewJump; document.querySelectorAll(".view").forEach((section) => section.classList.toggle("active", section.id === view)); document.querySelectorAll("[data-view]").forEach((node) => node.classList.toggle("active", node.dataset.view === view)); }));
 }
 
