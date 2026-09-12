@@ -23,3 +23,4 @@ Recommended format:
 - [ADR-006: Provider-attributed paper quote benchmark fulfillment](adr-006-paper-quote-benchmark-fulfillment.md)
 - [ADR-007: Research v2 screening contracts](adr-007-research-v2-screening.md)
 - [ADR-008: System Safety and Advisory Manager Risk Constitutions](adr-008-manager-specific-risk-constitutions.md)
+- [ADR-009: Additive Versioned Portfolio Target V2](adr-009-versioned-portfolio-target-v2.md)

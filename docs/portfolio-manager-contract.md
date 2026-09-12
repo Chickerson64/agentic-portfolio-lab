@@ -24,6 +24,37 @@ The Portfolio Manager does not:
 
 The manager may reason about evidence and portfolio state, but it does not own the surrounding workflow.
 
+## Version boundary: current V1 and additive V2
+
+The current v0.1 runtime remains the V1 contract: one immutable
+`PortfolioRecommendation` with `BUY` or `HOLD`; its historical journals and
+projections are unchanged. V2 is additive: `PortfolioTargetAllocation` is a
+provider-independent complete target containing portfolio identity, exact
+Decimal security and cash weights, overall rationale, risk/concentration and
+benchmark-active-risk commentary, cash classification and justification, and
+per-position role, thesis, confidence, research evidence, invalidation,
+review lineage, and explicit `INITIATE`/`RETAIN`/`INCREASE`/`REDUCE`/`REMOVE`
+holding disposition. Cash is explicitly `STRATEGIC` or `ACCIDENTAL`.
+
+V2 is intent, not a trade instruction. It does not encode BUY/SELL/HOLD/TRIM
+or EXIT as manager output. Deterministic downstream code derives
+current-versus-target actions, validates safety, obtains review and approval,
+and executes. The bounded migration seams, in order, are: manager
+adapter/context; decision journal and persistence/versioned read projections;
+Reviewer; System Safety and Manager Risk evaluation; approval; deterministic
+trade derivation/execution; API/UI; and audit/history projections. No V2
+downstream migration is active in v0.1.
+
+V2 validates security identity syntax at its boundary: tickers are canonical
+uppercase ASCII letters/digits, beginning with a letter and at most twelve
+characters; exchanges are canonical uppercase ASCII words separated by single
+spaces. This is a provider-independent grammar, not a provider or live-universe
+lookup. Invalidation conditions must be supplied as a tuple or list; V2 does
+not reinterpret strings as collections. A zero target weight is only valid with
+`REMOVE`; all other holding dispositions require a positive target. Allocation
+totals are calculated in the domain's fixed high-precision Decimal context and
+must equal exactly `1.000000`, without normalization.
+
 ### Settled MVP decisions
 
 For the first implementation:

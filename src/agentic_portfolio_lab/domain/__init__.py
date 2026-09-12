@@ -34,6 +34,16 @@ from .recommendations import (
     ReviewTrigger,
     ReviewTriggerType,
 )
+from .portfolio_decisions_v2 import (
+    CashClassification,
+    CashTarget,
+    ExistingHoldingDisposition,
+    PortfolioTargetAllocation,
+    PortfolioTargetPosition,
+    TargetConstructionMode,
+    V2PortfolioTarget,
+    V2PortfolioTargetPosition,
+)
 from .openai_value_manager import OpenAIValueManager, OpenAIValueManagerMetadata
 from .policy import (
     ApprovalAndExecutionPolicy,
@@ -189,6 +199,14 @@ __all__ = [
     "PassiveIndexConstitution",
     "PassiveIndexInvestmentIntent",
     "PortfolioRecommendation",
+    "CashClassification",
+    "CashTarget",
+    "ExistingHoldingDisposition",
+    "PortfolioTargetAllocation",
+    "PortfolioTargetPosition",
+    "TargetConstructionMode",
+    "V2PortfolioTarget",
+    "V2PortfolioTargetPosition",
     "PriceObservation",
     "PolicyLoader",
     "PolicyReferenceKind",

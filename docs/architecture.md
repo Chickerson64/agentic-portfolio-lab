@@ -2,6 +2,12 @@
 
 ## Overview
 
+V1 is the current runtime contract and remains immutable for historical reads.
+The additive V2 domain target (`PortfolioTargetAllocation`) is
+provider-independent and describes a complete target allocation, including
+strategic or accidental cash and position evidence lineage. It is planned;
+current-to-target trade derivation remains deterministic downstream.
+
 The system is organized as an investment committee with clear responsibilities.
 
 The expected decision and execution flow is:
@@ -87,6 +93,13 @@ The manager's proposed `target_weight` is immutable. Validation either accepts
 that exact weight or records a failure; it never silently resizes it. Only a
 passing weight is converted deterministically to dollars and quantity.
 
+The planned V2 target contract applies the same rule to whole-portfolio
+allocation: exact totals use the domain's fixed high-precision Decimal context,
+and identity/lineage collections are validated before normalization. V2's
+provider-independent identity grammar rejects malformed ticker and exchange
+syntax. These checks are contract-only until a future migration seam is
+approved.
+
 The current v0.1 runtime loads the active System Safety and Manager Risk
 Constitutions for new decision cycles and persists their two-layer evaluation.
 System Safety is hard; Manager Risk remains advisory.
@@ -116,6 +129,13 @@ deterministic Passive Index Constitution. It uses the same core Portfolio model
 as managed portfolios, with benchmark-specific constraints applied separately.
 
 ## Portfolio Lifecycle
+
+The planned V2 migration seams are ordered: manager adapter/context → decision
+journal and persistence/versioned read projections → Reviewer → System Safety
+and Manager Risk evaluation → approval → deterministic trade
+derivation/execution → API/UI → audit/history projections. Human approval,
+System Safety, Manager Risk, Reviewer, and auditability remain explicit
+boundaries; no seam changes the current V1 workflow yet.
 
 ```text
 Cash Event
