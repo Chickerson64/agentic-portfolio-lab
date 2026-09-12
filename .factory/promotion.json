@@ -1,0 +1,12 @@
+{
+  "allowNew": [
+    "src/**",
+    "tests/**",
+    "docs/**",
+    "frontend/**"
+  ],
+  "exclude": [
+    ".worktrees/**",
+    "ui-prototypes/**"
+  ]
+}
