@@ -23,6 +23,8 @@ def test_buy_only_and_no_op_are_derived_at_exact_8dp_precision():
     assert [(x.action, x.quantity) for x in plan.legs] == [(BatchTradeAction.BUY, Decimal("5.00000000"))]
     tiny = derive_batch_trade_plan(target(p, [("AAPL", ".000001", "INITIATE")], ".999999"), p, V2PriceSnapshot((quote("AAPL", 1000000),)), created_at=NOW)
     assert tiny.legs == ()
+    with pytest.raises(ValueError, match="no-action"):
+        BatchApproval(tiny, "human", NOW)
 
 def test_sell_trim_and_explicit_exit_semantics():
     p = portfolio("0", pos("AAPL", "5"), pos("MSFT", "5"), pos("IBM", "5"))

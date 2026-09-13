@@ -65,6 +65,9 @@ class PersistedRunState:
     screening_runs: tuple[ScreeningRun, ...] = ()
     fundamental_records: tuple[ProviderFundamentalRecord, ...] = ()
     benchmark_fulfillment_status: str = "PENDING_NO_ELIGIBLE_PRICE"
+    # Additive V2 artifacts share this aggregate; V1 artifacts remain
+    # untouched and are never reinterpreted as V2 cycles.
+    v2_cycles: tuple = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.metadata, LocalRunMetadata):
@@ -77,7 +80,7 @@ class PersistedRunState:
             raise TypeError("managed_history must be a PortfolioPerformanceHistory")
         if not isinstance(self.benchmark_history, BenchmarkPerformanceHistory):
             raise TypeError("benchmark_history must be a BenchmarkPerformanceHistory")
-        for name in ("funding_results", "price_observations", "research_batches", "journal_entries", "reviewer_results", "approvals", "executions", "execution_checks", "history_entries", "benchmark_fulfillments", "screening_runs", "fundamental_records"):
+        for name in ("funding_results", "price_observations", "research_batches", "journal_entries", "reviewer_results", "approvals", "executions", "execution_checks", "history_entries", "benchmark_fulfillments", "screening_runs", "fundamental_records", "v2_cycles"):
             value = getattr(self, name, ())
             if not isinstance(value, tuple):
                 raise TypeError(f"{name} must be a tuple")
@@ -86,6 +89,7 @@ class PersistedRunState:
         self._validate_decision_graph()
         self._validate_benchmark_fulfillments()
         self._validate_screening_and_fundamentals()
+        self._validate_v2_cycles()
         if getattr(self, "benchmark_fulfillment_status", "PENDING_NO_ELIGIBLE_PRICE") not in {
             "FULFILLED", "NO_ACTION_ZERO_CASH", "NO_ACTION_INSUFFICIENT_BUYING_POWER", "PENDING_NO_ELIGIBLE_PRICE",
         }:
@@ -312,6 +316,16 @@ class PersistedRunState:
         if len(set(record_ids)) != len(record_ids):
             raise ValueError("fundamental_records must not contain duplicate identities")
 
+    def _validate_v2_cycles(self) -> None:
+        from agentic_portfolio_lab.application.v2_weekly_cycle import V2CycleArtifacts
+        cycles = tuple(getattr(self, "v2_cycles", ()))
+        if not all(isinstance(item, V2CycleArtifacts) for item in cycles):
+            raise TypeError("v2_cycles must contain V2CycleArtifacts")
+        if len({item.cycle_id for item in cycles}) != len(cycles):
+            raise ValueError("v2_cycles must not contain duplicate identities")
+        if any(item.original_portfolio.portfolio_id != self.managed_portfolio.portfolio_id for item in cycles):
+            raise ValueError("V2 cycle portfolio lineage must match managed portfolio")
+
     def validate(self) -> None:
         """Validate aggregate coherence before a persistence transaction."""
         self._validate_current_history()
@@ -319,6 +333,7 @@ class PersistedRunState:
         self._validate_decision_graph()
         self._validate_benchmark_fulfillments()
         self._validate_screening_and_fundamentals()
+        self._validate_v2_cycles()
         self._validate_benchmark_status()
 
     @property

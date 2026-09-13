@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,6 +21,7 @@ from agentic_portfolio_lab.domain.reviewer import AIReviewer
 from agentic_portfolio_lab.domain.openai_value_manager import OpenAIValueManager
 from agentic_portfolio_lab.domain.value_manager import ValueManager
 from agentic_portfolio_lab.application.managed_execution import ManagedPaperExecutionService
+from agentic_portfolio_lab.application.v2_weekly_cycle import V2WeeklyCycleService
 from agentic_portfolio_lab.infrastructure.sqlite_local_state import SQLiteLocalRunStore, SQLiteMvpReadState, SQLiteOverviewBootstrapState, SQLitePriceRefreshState, SQLiteResearchBatchState
 from agentic_portfolio_lab.infrastructure.twelve_data import TwelveDataMarketPriceProvider
 
@@ -99,6 +101,7 @@ def create_app(
             managed_execution_service=managed_execution_service
             or (ManagedPaperExecutionService(store) if store is not None else None),
             revision_service=ReviseDecisionCycleService(store) if store is not None else None,
+            v2_cycle_service=V2WeeklyCycleService(store, now=lambda: datetime.now(timezone.utc)) if store is not None else None,
         )
     )
     return app

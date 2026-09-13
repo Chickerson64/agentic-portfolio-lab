@@ -297,6 +297,12 @@ export function normalizeWeeklyRunReadiness(payload) {
   };
 }
 
+export function normalizeV2Cycle(payload) {
+  if (payload === null) return null;
+  record(payload, "v2 cycle");
+  return { cycleId: text(field(payload, "cycle_id", "v2 cycle"), "v2 cycle.cycle_id"), readiness: record(field(payload, "readiness", "v2 cycle"), "v2 cycle.readiness"), current: record(field(payload, "current_portfolio", "v2 cycle"), "v2 cycle.current_portfolio"), target: record(field(payload, "target", "v2 cycle"), "v2 cycle.target"), plan: record(field(payload, "plan", "v2 cycle"), "v2 cycle.plan"), safety: record(field(payload, "system_safety", "v2 cycle"), "v2 cycle.system_safety"), managerRisk: record(field(payload, "manager_risk", "v2 cycle"), "v2 cycle.manager_risk"), reviewer: field(payload, "ai_reviewer", "v2 cycle"), approval: field(payload, "approval", "v2 cycle"), execution: field(payload, "execution", "v2 cycle"), reconciliation: field(payload, "reconciliation", "v2 cycle"), performance: field(payload, "performance", "v2 cycle"), audit: record(field(payload, "audit", "v2 cycle"), "v2 cycle.audit") };
+}
+
 export function normalizeDecision(payload) {
   if (payload === null) return null;
   const context = "decision";
@@ -544,7 +550,8 @@ export function normalizeBootstrapOverview(payload) {
 }
 
 export async function loadApplication() {
-  const [health, dashboard, decision, research, history, portfolio, performance, priceRefresh, weeklyRunReadiness] = await Promise.all([
+  const cycleId = new URLSearchParams(window.location.search).get("v2_cycle");
+  const [health, dashboard, decision, research, history, portfolio, performance, priceRefresh, weeklyRunReadiness, v2Cycle] = await Promise.all([
     apiClient.get("/health"),
     apiClient.get("/dashboard"),
     apiClient.get("/decisions/latest", { allowNotFound: true }),
@@ -554,6 +561,7 @@ export async function loadApplication() {
     apiClient.get("/performance"),
     apiClient.get("/price-refresh/latest", { allowNotFound: true }),
     apiClient.get("/weekly-run/readiness"),
+    cycleId ? apiClient.get(`/v2/cycles/${encodeURIComponent(cycleId)}`) : Promise.resolve(null),
   ]);
   return {
     health: normalizeHealth(health),
@@ -565,6 +573,7 @@ export async function loadApplication() {
     performance: normalizePerformance(performance, "performance"),
     priceRefresh: normalizePriceRefreshStatus(priceRefresh),
     weeklyRunReadiness: normalizeWeeklyRunReadiness(weeklyRunReadiness),
+    v2Cycle: normalizeV2Cycle(v2Cycle),
   };
 }
 
@@ -613,7 +622,7 @@ function chart(points) {
   return `<div class="chart-wrap"><svg class="chart" viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="Managed and SPY return history">${[20,40,60,80].map((y) => `<line class="grid-line" x1="0" y1="${y}" x2="100" y2="${y}"/>`).join("")}<path class="benchmark" d="${path("benchmarkReturn")}"/><path class="managed" d="${path("managedReturn")}"/></svg><div class="chart-labels"><span>${esc(dateTime(points[0].timestamp))}</span><span>${esc(dateTime(points.at(-1).timestamp))}</span></div></div>`;
 }
 
-function nav() { return `<section class="view active" id="overview"></section><section class="view" id="decision"></section><section class="view" id="research"></section><section class="view" id="portfolio"></section><section class="view" id="history"></section><section class="view" id="audit"></section>`; }
+function nav() { return `<section class="view active" id="overview"></section><section class="view" id="v2-cycle"></section><section class="view" id="decision"></section><section class="view" id="research"></section><section class="view" id="portfolio"></section><section class="view" id="history"></section><section class="view" id="audit"></section>`; }
 function checklistState(step) {
   if (step.terminal) return "terminal";
   if (step.completed) return "done";
@@ -820,10 +829,21 @@ function bindAuditLinks() {
   }));
 }
 function empty(title, message) { return `<section class="empty-state"><span class="kicker">No data</span><h1>${esc(title)}</h1><p>${esc(message)}</p></section>`; }
+export function renderV2Cycle(cycle) {
+  const node = document.querySelector("#v2-cycle");
+  if (!node) return;
+  if (!cycle) { node.innerHTML = empty("No V2 cycle selected", "Use ?v2_cycle=<cycle id> to inspect an immutable weekly target."); return; }
+  const positions = cycle.target.positions.map((p) => `<tr><td>${esc(p.security.ticker)}</td><td>${esc(p.weight)}</td><td>${esc(p.disposition)}</td><td>${esc(p.thesis)}</td><td>${esc(p.evidence.map((e) => e.evidence_id).join(", "))}</td></tr>`).join("");
+  const legs = cycle.plan.legs.map((p) => `<li>${esc(p.action)} ${esc(p.security.ticker)} · ${esc(p.quantity)} @ ${esc(p.price)}</li>`).join("") || "<li>No executable trades — completed no-action outcome.</li>";
+  const approval = cycle.approval ? `<p>Approved by ${esc(cycle.approval.decision_maker_id)} against binding ${esc(cycle.approval.binding)}</p>${!cycle.execution ? `<button class="refresh-button" id="v2-execute">Execute approved internal paper batch</button>` : ""}` : cycle.readiness.available_next?.includes("human_approval") ? `<button class="refresh-button" id="v2-approve">Approve exact batch</button>` : "<p>No approval artifact.</p>";
+  node.innerHTML = `<div class="page-heading"><div><span class="kicker">V2 weekly cycle</span><h1>Complete target allocation</h1><p>Backend-owned allocation, classifications, approvals, and accounting.</p></div><div class="cycle-id"><strong>${esc(cycle.cycleId)}</strong><small>${esc(cycle.audit.plan_identity)}</small></div></div><section class="two-col"><article class="surface"><span class="kicker">Current portfolio</span><h2>Cash ${esc(cycle.current.cash)}</h2><p>${esc(cycle.current.positions.map((p) => `${p.security.ticker} ${p.quantity}`).join(" · ") || "All cash")}</p></article><article class="surface"><span class="kicker">Target totals</span><h2>Securities + explicit cash = ${esc(cycle.target.total_weight)}</h2><p>${esc(cycle.target.cash.weight)} ${esc(cycle.target.cash.classification)} cash — ${esc(cycle.target.cash.rationale)}</p></article></section><article class="surface"><span class="kicker">Target positions / evidence</span><table class="holdings"><thead><tr><th>Security</th><th>Weight</th><th>Change</th><th>Rationale</th><th>Evidence</th></tr></thead><tbody>${positions}</tbody></table></article><section class="two-col"><article class="surface"><span class="kicker">Reviews</span><h2>System Safety: ${esc(cycle.safety.passed)}</h2><p>Manager Risk: ${esc(cycle.managerRisk.status)}</p><p>AI Reviewer: ${esc(cycle.reviewer?.status || "Not recorded")}</p></article><article class="surface"><span class="kicker">Exact paper plan</span><h2>${esc(cycle.plan.identity)}</h2><ul>${legs}</ul>${approval}${cycle.execution ? `<p>Internal simulator executed ${esc(cycle.execution.execution_id)}</p>` : ""}</article></section><article class="surface"><span class="kicker">Reconciliation / SPY / audit</span><p>${esc(JSON.stringify({ reconciliation: cycle.reconciliation, performance: cycle.performance, audit: cycle.audit }))}</p></article>`;
+  node.querySelector("#v2-approve")?.addEventListener("click", async () => { await apiClient.post(`/v2/cycles/${encodeURIComponent(cycle.cycleId)}/approve`, { decision_maker_id: "local-operator", decided_at: new Date().toISOString() }); await start(); });
+  node.querySelector("#v2-execute")?.addEventListener("click", async () => { await apiClient.post(`/v2/cycles/${encodeURIComponent(cycle.cycleId)}/execute?executed_at=${encodeURIComponent(new Date().toISOString())}`); await start(); });
+}
 function render(state) {
   app.innerHTML = nav(); document.querySelector("#portfolio-name").textContent = state.dashboard.portfolio.portfolioName;
   document.querySelector("#health-status").textContent = refreshStatus || refreshSummary(state.priceRefresh) || `${state.health.stateMode} · ${state.health.persisted ? "persisted" : "in-memory"}${state.health.synthetic ? " · demo" : ""}`;
-  renderOverview(state); renderDecision(state); renderResearch(state); renderPortfolio(state); renderHistory(state); bindCurrentTimeButtons(); bindAuditLinks();
+  renderOverview(state); renderV2Cycle(state.v2Cycle); renderDecision(state); renderResearch(state); renderPortfolio(state); renderHistory(state); bindCurrentTimeButtons(); bindAuditLinks();
   document.querySelectorAll("[data-view],[data-view-jump]").forEach((button) => button.addEventListener("click", () => { const view = button.dataset.view || button.dataset.viewJump; document.querySelectorAll(".view").forEach((section) => section.classList.toggle("active", section.id === view)); document.querySelectorAll("[data-view]").forEach((node) => node.classList.toggle("active", node.dataset.view === view)); }));
 }
 

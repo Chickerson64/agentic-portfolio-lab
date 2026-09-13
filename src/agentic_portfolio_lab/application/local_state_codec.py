@@ -34,13 +34,14 @@ def _types() -> dict[str, type[object]]:
     # Imports are intentionally explicit: only known local domain/application
     # artifacts may be rehydrated from a durable database document.
     from agentic_portfolio_lab.dashboard import DecisionHistoryArtifacts
-    from agentic_portfolio_lab.domain import approval, benchmark_fulfillment, cash_events, constitution, execution_check, journal, performance, policy, portfolio, portfolio_decisions_v2, price_refresh, provider_fundamentals, recommendations, research, research_provider, research_v3, reviewer, risk_validation, screening, simulated_execution, target_execution_v2, trades, universe, valuation, value_manager, value_manager_workflow
+    from agentic_portfolio_lab.domain import approval, benchmark_fulfillment, cash_events, constitution, execution_check, journal, performance, policy, portfolio, portfolio_decisions_v2, price_refresh, provider_fundamentals, recommendations, research, research_provider, research_v3, reviewer, risk_validation, screening, screening_v2, simulated_execution, target_execution_v2, trades, universe, valuation, value_manager, value_manager_workflow
     from agentic_portfolio_lab.infrastructure import v2_batch_store, v3_batch_store
+    from agentic_portfolio_lab.application import v2_weekly_cycle
 
     modules = (
         approval, benchmark_fulfillment, cash_events, constitution, execution_check, journal, performance, policy, portfolio, price_refresh,
         provider_fundamentals, recommendations, research, research_provider, reviewer, risk_validation,
-        screening, simulated_execution, target_execution_v2, trades, universe, valuation, value_manager, value_manager_workflow, portfolio_decisions_v2, research_v3, v2_batch_store, v3_batch_store,
+        screening, screening_v2, simulated_execution, target_execution_v2, trades, universe, valuation, value_manager, value_manager_workflow, portfolio_decisions_v2, research_v3, v2_batch_store, v3_batch_store, v2_weekly_cycle,
     )
     registry = {
         f"{LocalRunMetadata.__module__}.{LocalRunMetadata.__qualname__}": LocalRunMetadata,
@@ -343,6 +344,7 @@ def decode_run_state(value: Any) -> PersistedRunState:
         benchmark_fulfillments=canonical_fulfillments,
         screening_runs=getattr(state, "screening_runs", ()),
         fundamental_records=getattr(state, "fundamental_records", ()),
+        v2_cycles=getattr(state, "v2_cycles", ()),
         benchmark_fulfillment_status=getattr(state, "benchmark_fulfillment_status", "PENDING_NO_ELIGIBLE_PRICE"),
     )
 

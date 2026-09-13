@@ -441,6 +441,30 @@ class CashEventResponse(ApiModel):
     effective_at: str
 
 
+class V2ApprovalCommand(ApiModel):
+    decision_maker_id: str
+    decided_at: datetime
+
+
+class V2CycleResponse(ApiModel):
+    """Backend-owned V2 target, review, approval, and reconciliation projection."""
+    cycle_id: str
+    readiness: dict[str, object]
+    current_portfolio: object
+    target: object
+    screening: object
+    research: object
+    plan: object
+    system_safety: object
+    manager_risk: object
+    ai_reviewer: object
+    approval: object | None
+    execution: object | None
+    reconciliation: object | None
+    performance: object | None
+    audit: object
+
+
 class BenchmarkFulfillmentResponse(ApiModel):
     status: str
     fulfillment_id: str | None

@@ -206,6 +206,12 @@ class BatchApproval:
 
     def __post_init__(self) -> None:
         if not isinstance(self.plan, BatchTradePlan): raise TypeError("plan must be BatchTradePlan")
+        # A target can be complete and still round to no executable legs.  It
+        # is a truthful no-action outcome, not a trade batch a human can
+        # approve.  Keeping this at the domain boundary prevents every
+        # application adapter from accidentally manufacturing a fake approval
+        # or simulated execution for it.
+        if not self.plan.legs: raise ValueError("an empty batch plan is a no-action outcome and cannot be approved")
         if not isinstance(self.decision_maker_id, str) or not self.decision_maker_id.strip(): raise ValueError("decision_maker_id must not be empty")
         _require_aware_datetime(self.decided_at, field_name="decided_at")
         if self.decided_at < self.plan.created_at: raise ValueError("approval must not precede plan")
@@ -229,6 +235,7 @@ class SimulatedBatchExecution:
 def execute_approved_batch(approval: BatchApproval, portfolio: Portfolio, snapshot: V2PriceSnapshot, *, executed_at: datetime) -> SimulatedBatchExecution:
     """Atomically apply an approved plan, rejecting any stale state before mutation."""
     plan = approval.plan
+    if not plan.legs: raise ValueError("an empty batch plan is a no-action outcome and cannot be executed")
     if portfolio != plan.original_portfolio: raise ValueError("stale state: portfolio no longer matches approved plan")
     if snapshot.identity != plan.price_snapshot.identity: raise ValueError("stale state: price snapshot no longer matches approved plan")
     validate_batch_plan(plan)

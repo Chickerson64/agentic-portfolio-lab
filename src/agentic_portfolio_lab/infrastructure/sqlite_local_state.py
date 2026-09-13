@@ -337,6 +337,25 @@ class SQLiteLocalRunStore:
             key=lambda record: record.record_id,
             label="fundamental records",
         )
+        SQLiteLocalRunStore._require_v2_cycle_transitions(
+            getattr(current, "v2_cycles", ()), getattr(proposed, "v2_cycles", ())
+        )
+
+    @staticmethod
+    def _require_v2_cycle_transitions(current, proposed) -> None:
+        """V2 cycles may only fill later immutable artifacts, never alter lineage."""
+        proposed_by_id = {item.cycle_id: item for item in proposed}
+        for old in current:
+            new = proposed_by_id.get(old.cycle_id)
+            if new is None:
+                raise ValueError("V2 cycles must not be removed")
+            for name in ("started_at", "original_portfolio", "universe_snapshot_id", "screening", "research", "target", "plan", "system_safety_passed", "manager_risk_status", "reviewer_status", "reviewer_rationale", "execution_backend"):
+                if getattr(old, name) != getattr(new, name):
+                    raise ValueError(f"V2 cycle immutable artifact {name} cannot be rewritten")
+            if old.approval is not None and new.approval != old.approval:
+                raise ValueError("V2 approval cannot be rewritten")
+            if old.execution is not None and new.execution != old.execution:
+                raise ValueError("V2 execution cannot be rewritten")
 
     @staticmethod
     def _require_history_prefix(current: tuple[object, ...], proposed: tuple[object, ...], *, label: str) -> None:
