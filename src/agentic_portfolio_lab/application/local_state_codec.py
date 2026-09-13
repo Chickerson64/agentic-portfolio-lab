@@ -34,12 +34,13 @@ def _types() -> dict[str, type[object]]:
     # Imports are intentionally explicit: only known local domain/application
     # artifacts may be rehydrated from a durable database document.
     from agentic_portfolio_lab.dashboard import DecisionHistoryArtifacts
-    from agentic_portfolio_lab.domain import approval, benchmark_fulfillment, cash_events, constitution, execution_check, journal, performance, policy, portfolio, price_refresh, provider_fundamentals, recommendations, research, research_provider, reviewer, risk_validation, screening, simulated_execution, trades, universe, valuation, value_manager, value_manager_workflow
+    from agentic_portfolio_lab.domain import approval, benchmark_fulfillment, cash_events, constitution, execution_check, journal, performance, policy, portfolio, portfolio_decisions_v2, price_refresh, provider_fundamentals, recommendations, research, research_provider, reviewer, risk_validation, screening, simulated_execution, target_execution_v2, trades, universe, valuation, value_manager, value_manager_workflow
+    from agentic_portfolio_lab.infrastructure import v2_batch_store
 
     modules = (
         approval, benchmark_fulfillment, cash_events, constitution, execution_check, journal, performance, policy, portfolio, price_refresh,
         provider_fundamentals, recommendations, research, research_provider, reviewer, risk_validation,
-        screening, simulated_execution, trades, universe, valuation, value_manager, value_manager_workflow,
+        screening, simulated_execution, target_execution_v2, trades, universe, valuation, value_manager, value_manager_workflow, portfolio_decisions_v2, v2_batch_store,
     )
     registry = {
         f"{LocalRunMetadata.__module__}.{LocalRunMetadata.__qualname__}": LocalRunMetadata,
@@ -104,6 +105,9 @@ def decode(value: Any) -> Any:
         raise ValueError("persisted dataclass document is missing fields")
     decoded_fields = {name: decode(item) for name, item in raw_fields.items()}
     decoded_fields = _apply_dataclass_defaults(model_type, decoded_fields)
+    # Derived frozen fields (for example a cryptographic approval binding) are
+    # recomputed by their constructor and must not be supplied as inputs.
+    decoded_fields = {item.name: decoded_fields[item.name] for item in fields(model_type) if item.init and item.name in decoded_fields}
     # A history panel requires its approval to reference its exact in-memory
     # journal instance. Recreate that local edge before its constructor checks
     # run; decode_run_state later canonicalizes it to the aggregate journal.

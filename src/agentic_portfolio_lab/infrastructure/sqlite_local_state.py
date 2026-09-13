@@ -9,7 +9,7 @@ from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Sequence
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from agentic_portfolio_lab.application.build_research import ResearchCycleInputs
 from agentic_portfolio_lab.application.local_state import LocalRunMetadata, PersistedRunState
@@ -19,6 +19,11 @@ from agentic_portfolio_lab.application.mark_to_market import MarkToMarketService
 from agentic_portfolio_lab.domain.provider_fundamentals import ProviderEndpoint, ProviderFundamentalRecord
 from agentic_portfolio_lab.domain.research import ResearchBatch
 from agentic_portfolio_lab.domain.screening import ScreeningRun
+from agentic_portfolio_lab.domain.screening_v2 import (
+    ScreeningProfile,
+    ScreeningProfileIdentity,
+    ScreeningRunV2,
+)
 from agentic_portfolio_lab.dashboard import DecisionHistoryArtifacts
 from agentic_portfolio_lab.domain.cash_events import CashEvent, CashEventFundingWorkflow
 from agentic_portfolio_lab.domain.performance import BenchmarkPerformanceHistory, PerformanceComparison, PortfolioPerformanceHistory
@@ -86,6 +91,73 @@ class SQLiteLocalRunStore:
                 "INSERT INTO universe_snapshots (snapshot_id, provider_identity, retrieved_at, as_of, document) VALUES (?, ?, ?, ?, ?)",
                 (snapshot.snapshot_id, snapshot.provider_identity, snapshot.retrieved_at.isoformat(), snapshot.as_of.isoformat(), document),
             )
+
+    def save_screening_profile(self, profile: ScreeningProfile) -> None:
+        """Persist an immutable V2 profile under its typed composite identity."""
+        if not isinstance(profile, ScreeningProfile):
+            raise TypeError("profile must be a ScreeningProfile")
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        document = profile.to_json()
+        with self._connect() as connection:
+            self._create_schema(connection)
+            row = connection.execute(
+                "SELECT document FROM screening_profiles WHERE manager_id = ? AND profile_name = ? AND profile_version = ?",
+                (profile.identity.manager_id, profile.identity.profile_name, profile.identity.profile_version),
+            ).fetchone()
+            if row is not None:
+                if row["document"] != document:
+                    raise ValueError("screening profiles must not rewrite persisted artifacts")
+                return
+            connection.execute(
+                "INSERT INTO screening_profiles (manager_id, profile_name, profile_version, document) VALUES (?, ?, ?, ?)",
+                (profile.identity.manager_id, profile.identity.profile_name, profile.identity.profile_version, document),
+            )
+
+    def load_screening_profile(self, identity: ScreeningProfileIdentity) -> ScreeningProfile | None:
+        if not isinstance(identity, ScreeningProfileIdentity):
+            raise TypeError("identity must be a ScreeningProfileIdentity")
+        if not self._path.exists():
+            return None
+        with self._connect() as connection:
+            self._create_schema(connection)
+            row = connection.execute(
+                "SELECT document FROM screening_profiles WHERE manager_id = ? AND profile_name = ? AND profile_version = ?",
+                (identity.manager_id, identity.profile_name, identity.profile_version),
+            ).fetchone()
+        return None if row is None else ScreeningProfile.from_json(row["document"])
+
+    def save_screening_artifact(self, artifact: ScreeningRunV2) -> None:
+        """Append one immutable V2 screening artifact outside v0.1 state."""
+        if not isinstance(artifact, ScreeningRunV2):
+            raise TypeError("artifact must be a ScreeningRunV2")
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        document = artifact.to_json()
+        with self._connect() as connection:
+            self._create_schema(connection)
+            row = connection.execute(
+                "SELECT document FROM screening_artifacts WHERE screening_run_id = ?",
+                (str(artifact.screening_run_id),),
+            ).fetchone()
+            if row is not None:
+                if row["document"] != document:
+                    raise ValueError("screening artifacts must not rewrite persisted artifacts")
+                return
+            connection.execute(
+                "INSERT INTO screening_artifacts (screening_run_id, snapshot_id, manager_id, profile_name, profile_version, as_of, document) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (str(artifact.screening_run_id), artifact.universe_snapshot_id, artifact.profile.identity.manager_id, artifact.profile.identity.profile_name, artifact.profile.identity.profile_version, artifact.provenance.as_of.isoformat(), document),
+            )
+
+    def load_screening_artifact(self, screening_run_id: UUID) -> ScreeningRunV2 | None:
+        if not isinstance(screening_run_id, UUID):
+            raise TypeError("screening_run_id must be a UUID")
+        if not self._path.exists():
+            return None
+        with self._connect() as connection:
+            self._create_schema(connection)
+            row = connection.execute(
+                "SELECT document FROM screening_artifacts WHERE screening_run_id = ?", (str(screening_run_id),)
+            ).fetchone()
+        return None if row is None else ScreeningRunV2.from_json(row["document"])
 
     def load_universe_snapshot(self, snapshot_id: str | None = None):
         from agentic_portfolio_lab.domain.universe_snapshots import UniverseSnapshot
@@ -327,6 +399,8 @@ class SQLiteLocalRunStore:
             CREATE TABLE IF NOT EXISTS screening_runs (screening_run_id TEXT PRIMARY KEY, document TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS fundamental_records (record_id TEXT PRIMARY KEY, document TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS universe_snapshots (snapshot_id TEXT PRIMARY KEY, provider_identity TEXT NOT NULL, retrieved_at TEXT NOT NULL, as_of TEXT NOT NULL, document TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS screening_profiles (manager_id TEXT NOT NULL, profile_name TEXT NOT NULL, profile_version TEXT NOT NULL, document TEXT NOT NULL, PRIMARY KEY (manager_id, profile_name, profile_version));
+            CREATE TABLE IF NOT EXISTS screening_artifacts (screening_run_id TEXT PRIMARY KEY, snapshot_id TEXT NOT NULL, manager_id TEXT NOT NULL, profile_name TEXT NOT NULL, profile_version TEXT NOT NULL, as_of TEXT NOT NULL, document TEXT NOT NULL);
             """
         )
 

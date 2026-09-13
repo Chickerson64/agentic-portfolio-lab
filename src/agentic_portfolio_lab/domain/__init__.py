@@ -44,6 +44,17 @@ from .portfolio_decisions_v2 import (
     V2PortfolioTarget,
     V2PortfolioTargetPosition,
 )
+from .target_execution_v2 import (
+    BatchApproval,
+    BatchTradeAction,
+    BatchTradeLeg,
+    BatchTradePlan,
+    SimulatedBatchExecution,
+    V2PriceSnapshot,
+    derive_batch_trade_plan,
+    execute_approved_batch,
+    validate_batch_plan,
+)
 from .openai_value_manager import OpenAIValueManager, OpenAIValueManagerMetadata
 from .policy import (
     ApprovalAndExecutionPolicy,
@@ -207,6 +218,15 @@ __all__ = [
     "TargetConstructionMode",
     "V2PortfolioTarget",
     "V2PortfolioTargetPosition",
+    "BatchApproval",
+    "BatchTradeAction",
+    "BatchTradeLeg",
+    "BatchTradePlan",
+    "SimulatedBatchExecution",
+    "V2PriceSnapshot",
+    "derive_batch_trade_plan",
+    "execute_approved_batch",
+    "validate_batch_plan",
     "PriceObservation",
     "PolicyLoader",
     "PolicyReferenceKind",

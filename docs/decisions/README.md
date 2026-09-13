@@ -25,3 +25,5 @@ Recommended format:
 - [ADR-008: System Safety and Advisory Manager Risk Constitutions](adr-008-manager-specific-risk-constitutions.md)
 - [ADR-009: Additive Versioned Portfolio Target V2](adr-009-versioned-portfolio-target-v2.md)
 - [ADR-010: Alpaca universe and market-data adapter](adr-010-alpaca-universe-market-data.md)
+- [ADR-011: V2 daily-bar screening coexistence boundary](adr-011-v2-daily-bar-screening.md)
+- [ADR-012: V2 immutable target-derived batch plans](adr-012-v2-immutable-batch-trade-plans.md)
