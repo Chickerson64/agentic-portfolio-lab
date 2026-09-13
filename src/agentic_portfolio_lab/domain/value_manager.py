@@ -11,6 +11,7 @@ from .policy import ManagerRiskConstitution
 from .portfolio import Portfolio, _require_non_empty_text
 from .recommendations import PortfolioRecommendation
 from .research import ResearchBatch
+from .research_v3 import ResearchBatchV3
 
 _VALUE_MANAGER_TYPE = "VALUE"
 
@@ -34,7 +35,7 @@ class ValueManagerDecisionContext:
     """
 
     portfolio: Portfolio
-    research_batch: ResearchBatch
+    research_batch: ResearchBatch | ResearchBatchV3
     constitution: ValueManagerConstitution
     prior_reviewer_feedback: tuple[str, ...] | list[str] = ()
     manager_risk_constitution: ManagerRiskConstitution | None = None
@@ -42,8 +43,10 @@ class ValueManagerDecisionContext:
     def __post_init__(self) -> None:
         if not isinstance(self.portfolio, Portfolio):
             raise TypeError("portfolio must be a Portfolio")
-        if not isinstance(self.research_batch, ResearchBatch):
-            raise TypeError("research_batch must be a ResearchBatch")
+        if isinstance(self.research_batch, ResearchBatchV3):
+            object.__setattr__(self, "research_batch", self.research_batch.as_manager_research_batch(portfolio_id=self.portfolio.portfolio_id))
+        elif not isinstance(self.research_batch, ResearchBatch):
+            raise TypeError("research_batch must be a ResearchBatch or ResearchBatchV3")
         if self.research_batch.portfolio_id != self.portfolio.portfolio_id:
             raise ValueError("research_batch portfolio_id must match portfolio")
         if self.research_batch.manager_type != _VALUE_MANAGER_TYPE:

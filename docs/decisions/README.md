@@ -27,3 +27,4 @@ Recommended format:
 - [ADR-010: Alpaca universe and market-data adapter](adr-010-alpaca-universe-market-data.md)
 - [ADR-011: V2 daily-bar screening coexistence boundary](adr-011-v2-daily-bar-screening.md)
 - [ADR-012: V2 immutable target-derived batch plans](adr-012-v2-immutable-batch-trade-plans.md)
+- [ADR-013: Research V3 candidate-and-holding batches](adr-013-research-v3-candidate-and-holding-batches.md)

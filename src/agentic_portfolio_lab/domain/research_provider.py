@@ -23,12 +23,15 @@ class SourceResearchRecord:
     source_title: str
     source_date: date
     facts: tuple[tuple[str, str], ...]
+    reference: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "source_type", _require_non_empty_text(self.source_type, field_name="source_type").strip())
         object.__setattr__(self, "source_title", _require_non_empty_text(self.source_title, field_name="source_title").strip())
         if not isinstance(self.source_date, date):
             raise TypeError("source_date must be a date")
+        if self.reference is not None:
+            object.__setattr__(self, "reference", _require_non_empty_text(self.reference, field_name="reference").strip())
 
 
 @dataclass(frozen=True, slots=True)
