@@ -392,8 +392,8 @@ def test_value_v2_reframes_starter_size_and_evidence_as_advisory_without_mutatin
     assert legacy.risk_constitution_version.value == "value-risk-v1.0.0"
     assert legacy.content_hash == "d455809836600fc8a23bafdbd8dd5a075ccbc886ecf71878260cb1964ac31626"
     assert advisory.risk_constitution_version.value == "value-risk-v2.0.0"
-    assert _investment_reference_v2().content_hash == "0723adf9f759dc03f38a6b584e1942967bdceac31a4117fa2c534a2e440b4bb9"
-    assert advisory.content_hash == "74e76913247ac727b3c1a0390cfe88345224d8f09dd69b51512bb3d0e048788e"
+    assert _investment_reference_v2().content_hash == "5b44ec13a5edc105efef71928ec3bd56c39588b1ad8d67be473a5eb46b5c2dc2"
+    assert advisory.content_hash == "eee0d0afcd80c5f5e26667d7874985507fe2f905228fcdde3b9d3ef04a49366b"
     assert advisory.compatible_with(_investment_reference_v2())
     assert not advisory.compatible_with(investment)
     assert advisory.sizing_guidance.typical_starter_weight_min == Decimal("0.05")

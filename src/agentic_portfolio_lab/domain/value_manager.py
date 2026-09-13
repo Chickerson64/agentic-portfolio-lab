@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Mapping, Protocol, runtime_checkable
 from uuid import UUID
 
 from .constitution import ValueManagerConstitution
@@ -39,14 +39,28 @@ class ValueManagerDecisionContext:
     constitution: ValueManagerConstitution
     prior_reviewer_feedback: tuple[str, ...] | list[str] = ()
     manager_risk_constitution: ManagerRiskConstitution | None = None
+    market_context: Mapping[str, object] | None = None
+    prior_decision_lineage: Mapping[str, object] | None = None
+    research_v3_batch: ResearchBatchV3 | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.portfolio, Portfolio):
             raise TypeError("portfolio must be a Portfolio")
         if isinstance(self.research_batch, ResearchBatchV3):
+            if self.research_v3_batch is not None and self.research_v3_batch is not self.research_batch:
+                raise ValueError("research_v3_batch must be the supplied research_batch")
+            object.__setattr__(self, "research_v3_batch", self.research_batch)
             object.__setattr__(self, "research_batch", self.research_batch.as_manager_research_batch(portfolio_id=self.portfolio.portfolio_id))
         elif not isinstance(self.research_batch, ResearchBatch):
             raise TypeError("research_batch must be a ResearchBatch or ResearchBatchV3")
+        elif self.research_v3_batch is not None:
+            if not isinstance(self.research_v3_batch, ResearchBatchV3):
+                raise TypeError("research_v3_batch must be a ResearchBatchV3 or None")
+            expected_batch = self.research_v3_batch.as_manager_research_batch(
+                portfolio_id=self.portfolio.portfolio_id
+            )
+            if self.research_batch != expected_batch:
+                raise ValueError("research_v3_batch must exactly match research_batch lineage")
         if self.research_batch.portfolio_id != self.portfolio.portfolio_id:
             raise ValueError("research_batch portfolio_id must match portfolio")
         if self.research_batch.manager_type != _VALUE_MANAGER_TYPE:
@@ -59,6 +73,10 @@ class ValueManagerDecisionContext:
             if self.manager_risk_constitution.manager_type != _VALUE_MANAGER_TYPE:
                 raise ValueError("manager_risk_constitution manager_type must be VALUE")
         object.__setattr__(self, "prior_reviewer_feedback", _normalize_feedback(self.prior_reviewer_feedback))
+        if self.market_context is not None and not isinstance(self.market_context, Mapping):
+            raise TypeError("market_context must be a mapping or None")
+        if self.prior_decision_lineage is not None and not isinstance(self.prior_decision_lineage, Mapping):
+            raise TypeError("prior_decision_lineage must be a mapping or None")
 
     @property
     def decision_cycle_id(self) -> UUID:

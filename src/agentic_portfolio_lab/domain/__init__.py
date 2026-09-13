@@ -41,6 +41,7 @@ from .portfolio_decisions_v2 import (
     PortfolioTargetAllocation,
     PortfolioTargetPosition,
     TargetConstructionMode,
+    TargetDecisionProvenance,
     V2PortfolioTarget,
     V2PortfolioTargetPosition,
 )
@@ -216,6 +217,7 @@ __all__ = [
     "PortfolioTargetAllocation",
     "PortfolioTargetPosition",
     "TargetConstructionMode",
+    "TargetDecisionProvenance",
     "V2PortfolioTarget",
     "V2PortfolioTargetPosition",
     "BatchApproval",

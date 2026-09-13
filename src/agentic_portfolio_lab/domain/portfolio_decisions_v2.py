@@ -40,6 +40,31 @@ class TargetConstructionMode(StrEnum):
     REBALANCE = "REBALANCE"
 
 
+@dataclass(frozen=True, slots=True)
+class TargetDecisionProvenance:
+    """Versioned model and input lineage retained with a V2 target."""
+
+    provider: str
+    model: str
+    schema_version: str
+    prompt_version: str
+    response_id: str | None
+    request_id: str | None
+    lineage: tuple[tuple[str, str], ...] | list[tuple[str, str]]
+
+    def __post_init__(self) -> None:
+        for field_name in ("provider", "model", "schema_version", "prompt_version"):
+            object.__setattr__(self, field_name, _text(getattr(self, field_name), field_name))
+        for field_name in ("response_id", "request_id"):
+            value = getattr(self, field_name)
+            if value is not None and not isinstance(value, str):
+                raise TypeError(f"{field_name} must be a string or None")
+        lineage = tuple(self.lineage)
+        if not lineage or any(not isinstance(item, tuple) or len(item) != 2 or not all(isinstance(value, str) and value.strip() for value in item) for item in lineage):
+            raise ValueError("lineage must contain nonblank string pairs")
+        object.__setattr__(self, "lineage", lineage)
+
+
 def _text(value: str, field_name: str) -> str:
     return _require_non_empty_text(value, field_name=field_name).strip()
 
@@ -148,6 +173,7 @@ class PortfolioTargetAllocation:
     cash_target: CashTarget
     positions: tuple[PortfolioTargetPosition, ...] | list[PortfolioTargetPosition]
     construction_mode: TargetConstructionMode | str = TargetConstructionMode.REBALANCE
+    decision_provenance: TargetDecisionProvenance | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.portfolio_id, UUID):
@@ -169,6 +195,8 @@ class PortfolioTargetAllocation:
             raise ValueError("security target weights plus cash weight must equal exactly 1.000000")
         object.__setattr__(self, "positions", positions)
         object.__setattr__(self, "construction_mode", _enum(self.construction_mode, TargetConstructionMode, "construction_mode"))
+        if self.decision_provenance is not None and not isinstance(self.decision_provenance, TargetDecisionProvenance):
+            raise TypeError("decision_provenance must be a TargetDecisionProvenance or None")
 
     @property
     def target_cash(self) -> CashTarget:

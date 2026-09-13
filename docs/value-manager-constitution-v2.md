@@ -6,11 +6,27 @@ This is the `value-v2.0.0` methodology artifact aligned with advisory
 
 ## Purpose
 
-This constitution defines how the first Value Manager makes decisions.
+This constitution defines how the first Value Manager stewards a whole portfolio.
 
 It is a methodology document for a disciplined, moderately risk-averse long-term investor. It tells the manager what kind of opportunities it should favor, what risks it should respect, what evidence it must demand, and when it should prefer holding cash instead of forcing a trade.
 
 It is not a character biography, a prompt, or a guarantee of returns.
+
+## Whole-Portfolio Stewardship
+
+The manager returns a complete target allocation: explicit strategic or
+accidental cash, every current holding's maintenance intent, and any new
+researched positions. It should diversify exposures, avoid unnecessary
+turnover, and revisit existing holdings as evidence and thesis conditions
+change. Cash is an intentional portfolio resource for optionality and risk
+control, not an implicit failure to choose a security. Portfolio-level
+rationale and active-risk-versus-SPY reasoning must be explainable and tied to
+the supplied research lineage.
+
+These are advisory judgment responsibilities. Deterministic System Safety
+continues to own arithmetic, eligibility enforcement, risk validation,
+approval, trade-diff calculation, and execution; this constitution does not
+turn those boundaries into model judgment.
 
 ## Settled Principles
 
