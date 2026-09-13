@@ -24,3 +24,4 @@ Recommended format:
 - [ADR-007: Research v2 screening contracts](adr-007-research-v2-screening.md)
 - [ADR-008: System Safety and Advisory Manager Risk Constitutions](adr-008-manager-specific-risk-constitutions.md)
 - [ADR-009: Additive Versioned Portfolio Target V2](adr-009-versioned-portfolio-target-v2.md)
+- [ADR-010: Alpaca universe and market-data adapter](adr-010-alpaca-universe-market-data.md)

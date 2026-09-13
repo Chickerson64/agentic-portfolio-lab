@@ -82,6 +82,19 @@ Required for the live v0.1 workflow:
 - `ALPHA_VANTAGE_API_KEY`
 - `OPENAI_API_KEY` — used by the official OpenAI SDK
 
+The optional Alpaca universe refresh stores a broad, immutable local snapshot;
+it does not place orders or change the current managed universe. Configure
+credentials only in the ignored process environment, then run:
+
+```bash
+export ALPACA_API_KEY_ID=... ALPACA_API_SECRET_KEY=...
+PYTHONPATH=src python -m agentic_portfolio_lab.application.refresh_universe
+```
+
+See [ADR-010](docs/decisions/adr-010-alpaca-universe-market-data.md) for
+supported eligibility flags and the important limitation that Alpaca's
+`us_equity` metadata does not classify stock versus ETF.
+
 Optional:
 
 - `OPENAI_VALUE_MANAGER_MODEL` — default `gpt-5.6-terra`

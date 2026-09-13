@@ -67,6 +67,41 @@ class SQLiteLocalRunStore:
                 raise ValueError("local SQLite run is missing its current state document")
             return decode_run_state(json.loads(row["document"]))
 
+    def save_universe_snapshot(self, snapshot) -> None:
+        """Persist an immutable provider-neutral universe artifact outside run state."""
+        from agentic_portfolio_lab.domain.universe_snapshots import UniverseSnapshot
+
+        if not isinstance(snapshot, UniverseSnapshot):
+            raise TypeError("snapshot must be a UniverseSnapshot")
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        document = snapshot.to_json()
+        with self._connect() as connection:
+            self._create_schema(connection)
+            existing = connection.execute("SELECT document FROM universe_snapshots WHERE snapshot_id = ?", (snapshot.snapshot_id,)).fetchone()
+            if existing is not None:
+                if existing["document"] != document:
+                    raise ValueError("universe snapshots must not rewrite persisted artifacts")
+                return
+            connection.execute(
+                "INSERT INTO universe_snapshots (snapshot_id, provider_identity, retrieved_at, as_of, document) VALUES (?, ?, ?, ?, ?)",
+                (snapshot.snapshot_id, snapshot.provider_identity, snapshot.retrieved_at.isoformat(), snapshot.as_of.isoformat(), document),
+            )
+
+    def load_universe_snapshot(self, snapshot_id: str | None = None):
+        from agentic_portfolio_lab.domain.universe_snapshots import UniverseSnapshot
+
+        if snapshot_id is not None and (not isinstance(snapshot_id, str) or not snapshot_id.strip()):
+            raise ValueError("snapshot_id must be non-empty text when supplied")
+        if not self._path.exists():
+            return None
+        with self._connect() as connection:
+            self._create_schema(connection)
+            if snapshot_id is None:
+                row = connection.execute("SELECT document FROM universe_snapshots ORDER BY retrieved_at DESC, rowid DESC LIMIT 1").fetchone()
+            else:
+                row = connection.execute("SELECT document FROM universe_snapshots WHERE snapshot_id = ?", (snapshot_id,)).fetchone()
+            return None if row is None else UniverseSnapshot.from_json(row["document"])
+
     def save_transition(self, state: PersistedRunState) -> None:
         """Atomically validate and persist one append-preserving transition."""
         if not isinstance(state, PersistedRunState):
@@ -291,6 +326,7 @@ class SQLiteLocalRunStore:
             CREATE TABLE IF NOT EXISTS benchmark_fulfillments (fulfillment_id TEXT PRIMARY KEY, document TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS screening_runs (screening_run_id TEXT PRIMARY KEY, document TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS fundamental_records (record_id TEXT PRIMARY KEY, document TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS universe_snapshots (snapshot_id TEXT PRIMARY KEY, provider_identity TEXT NOT NULL, retrieved_at TEXT NOT NULL, as_of TEXT NOT NULL, document TEXT NOT NULL);
             """
         )
 
