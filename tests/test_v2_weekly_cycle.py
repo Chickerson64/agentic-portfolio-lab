@@ -5,6 +5,8 @@ from decimal import Decimal
 import pytest
 
 from agentic_portfolio_lab.application.v2_weekly_cycle import V2WeeklyCycleService
+from agentic_portfolio_lab.application.v2_advisory import V2ManagerRiskService, DeterministicV2Reviewer
+from agentic_portfolio_lab.application.active_policy import load_active_value_policy
 from agentic_portfolio_lab.domain import CashBalance, CashClassification, CashTarget, Portfolio, PortfolioTargetAllocation, PortfolioTargetPosition, RecommendationEvidenceReference, SecurityIdentity, V2PriceSnapshot
 from agentic_portfolio_lab.domain.recommendations import ReviewTrigger
 from agentic_portfolio_lab.domain.research_v3 import ResearchBatchV3, ResearchSubjectRole, ResearchV3Evidence, ResearchV3Subject, ScreeningEvidenceContext
@@ -29,6 +31,14 @@ def artifacts(portfolio, *, weight="0.600000", cash="0.400000"):
     target = PortfolioTargetAllocation(portfolio.portfolio_id, "multi-position target rationale", "risk", "concentration", "SPY context", CashTarget(Decimal(cash), CashClassification.STRATEGIC, "intentional cash"), (position,))
     return screening, research, target
 
+def advisory(portfolio, research, target, snapshot):
+    from agentic_portfolio_lab.domain import build_batch_trade_plan, evaluate_batch_plan_safety
+    plan = build_batch_trade_plan(target, portfolio, snapshot, created_at=NOW)
+    safety = evaluate_batch_plan_safety(plan, evaluated_at=NOW)
+    risk = V2ManagerRiskService(load_active_value_policy().manager_risk_constitution).assess(portfolio=portfolio, target=target, plan=plan, research=research, assessed_at=NOW)
+    review = DeterministicV2Reviewer().review(portfolio=portfolio, target=target, plan=plan, system_safety=safety, manager_risk=risk, research=research, reviewed_at=NOW)
+    return risk, review
+
 def test_v2_cycle_persists_exact_target_approval_execution_and_reconciliation(tmp_path):
     store = SQLiteLocalRunStore(tmp_path / "run.sqlite")
     state = store.initialize_run(initialized_at=NOW)
@@ -36,7 +46,8 @@ def test_v2_cycle_persists_exact_target_approval_execution_and_reconciliation(tm
     # authoritative state fixture; the cycle itself starts from that state.
     service = V2WeeklyCycleService(store, now=lambda: NOW)
     screening, research, target = artifacts(state.managed_portfolio)
-    cycle = service.record_preapproval(universe_snapshot_id="universe-offline", screening=screening, research=research, target=target, snapshot=V2PriceSnapshot((quote("AAPL", "10"),)))
+    snapshot = V2PriceSnapshot((quote("AAPL", "10"),)); risk, review = advisory(state.managed_portfolio, research, target, snapshot)
+    cycle = service.record_preapproval(universe_snapshot_id="universe-offline", screening=screening, research=research, target=target, snapshot=snapshot, manager_risk=risk, reviewer=review)
     assert cycle.plan.legs and cycle.readiness()["approval_status"] == "PENDING"
     approved = service.approve(cycle.cycle_id, decision_maker_id="human", decided_at=NOW + timedelta(minutes=1))
     completed = service.execute(approved.cycle_id, executed_at=NOW + timedelta(minutes=2))
@@ -53,7 +64,27 @@ def test_v2_no_action_is_terminal_without_approval_or_execution(tmp_path):
     # A zero-weight REMOVE needs a valid target position, so use the complete
     # all-cash target directly with the researched name omitted.
     target = PortfolioTargetAllocation(state.managed_portfolio.portfolio_id, "cash", "risk", "concentration", "SPY", CashTarget(Decimal("1"), CashClassification.STRATEGIC, "intentional"), ())
-    cycle = service.record_preapproval(universe_snapshot_id="universe-offline", screening=screening, research=research, target=target, snapshot=V2PriceSnapshot((quote("AAPL", "10"),)))
+    snapshot = V2PriceSnapshot((quote("AAPL", "10"),)); risk, review = advisory(state.managed_portfolio, research, target, snapshot)
+    cycle = service.record_preapproval(universe_snapshot_id="universe-offline", screening=screening, research=research, target=target, snapshot=snapshot, manager_risk=risk, reviewer=review)
     assert cycle.no_action and cycle.readiness()["approval_status"] == "NOT_APPLICABLE"
     with pytest.raises(ValueError, match="no-action"):
         service.approve(cycle.cycle_id, decision_maker_id="human", decided_at=NOW)
+
+
+def test_v2_rejection_is_exact_terminal_and_survives_restart(tmp_path):
+    store = SQLiteLocalRunStore(tmp_path / "rejected.sqlite")
+    state = store.initialize_run(initialized_at=NOW)
+    service = V2WeeklyCycleService(store, now=lambda: NOW)
+    screening, research, target = artifacts(state.managed_portfolio)
+    snapshot = V2PriceSnapshot((quote("AAPL", "10"),)); risk, review = advisory(state.managed_portfolio, research, target, snapshot)
+    cycle = service.record_preapproval(universe_snapshot_id="universe-offline", screening=screening, research=research, target=target, snapshot=snapshot, manager_risk=risk, reviewer=review)
+    rejected = service.reject(cycle.cycle_id, decision_maker_id="human", decided_at=NOW + timedelta(minutes=1), reason="not this week")
+    assert rejected.rejection is not None
+    assert rejected.rejection.binding == rejected.plan.identity or rejected.rejection.binding
+    assert rejected.readiness()["approval_status"] == "REJECTED"
+    with pytest.raises(ValueError, match="rejected"):
+        service.approve(cycle.cycle_id, decision_maker_id="human", decided_at=NOW + timedelta(minutes=2))
+    with pytest.raises(ValueError, match="requires exact human approval"):
+        service.execute(cycle.cycle_id, executed_at=NOW + timedelta(minutes=2))
+    reloaded = SQLiteLocalRunStore(tmp_path / "rejected.sqlite").open_run()
+    assert reloaded is not None and reloaded.v2_cycles[0].rejection == rejected.rejection

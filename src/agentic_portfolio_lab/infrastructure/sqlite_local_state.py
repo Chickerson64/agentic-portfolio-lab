@@ -349,11 +349,13 @@ class SQLiteLocalRunStore:
             new = proposed_by_id.get(old.cycle_id)
             if new is None:
                 raise ValueError("V2 cycles must not be removed")
-            for name in ("started_at", "original_portfolio", "universe_snapshot_id", "screening", "research", "target", "plan", "system_safety_passed", "manager_risk_status", "reviewer_status", "reviewer_rationale", "execution_backend"):
+            for name in ("started_at", "original_portfolio", "universe_snapshot_id", "screening", "research", "target", "plan", "system_safety", "manager_risk", "reviewer", "execution_backend"):
                 if getattr(old, name) != getattr(new, name):
                     raise ValueError(f"V2 cycle immutable artifact {name} cannot be rewritten")
             if old.approval is not None and new.approval != old.approval:
                 raise ValueError("V2 approval cannot be rewritten")
+            if old.rejection is not None and new.rejection != old.rejection:
+                raise ValueError("V2 rejection cannot be rewritten")
             if old.execution is not None and new.execution != old.execution:
                 raise ValueError("V2 execution cannot be rewritten")
 

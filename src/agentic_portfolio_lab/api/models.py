@@ -446,6 +446,10 @@ class V2ApprovalCommand(ApiModel):
     decided_at: datetime
 
 
+class V2RejectionCommand(V2ApprovalCommand):
+    reason: str | None = None
+
+
 class V2CycleResponse(ApiModel):
     """Backend-owned V2 target, review, approval, and reconciliation projection."""
     cycle_id: str
@@ -459,6 +463,7 @@ class V2CycleResponse(ApiModel):
     manager_risk: object
     ai_reviewer: object
     approval: object | None
+    rejection: object | None
     execution: object | None
     reconciliation: object | None
     performance: object | None

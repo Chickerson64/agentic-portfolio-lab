@@ -22,6 +22,16 @@ from agentic_portfolio_lab.domain.openai_value_manager import OpenAIValueManager
 from agentic_portfolio_lab.domain.value_manager import ValueManager
 from agentic_portfolio_lab.application.managed_execution import ManagedPaperExecutionService
 from agentic_portfolio_lab.application.v2_weekly_cycle import V2WeeklyCycleService
+from agentic_portfolio_lab.application.v2_preparation import V2WeeklyPreparationService
+from agentic_portfolio_lab.application.screen_universe_v2 import ScreenUniverseV2Service
+from agentic_portfolio_lab.application.refresh_universe import RefreshUniverseService
+from agentic_portfolio_lab.application.build_research_v3 import BuildResearchV3Service
+from agentic_portfolio_lab.application.v2_advisory import V2ManagerRiskService
+from agentic_portfolio_lab.application.v2_prices import MarketDataV2PriceSnapshotProvider
+from agentic_portfolio_lab.application.active_policy import load_active_value_policy
+from agentic_portfolio_lab.domain.screening_v2 import ScreeningProfileIdentity
+from agentic_portfolio_lab.domain.openai_v2_reviewer import OpenAIV2Reviewer
+from agentic_portfolio_lab.infrastructure.alpaca import AlpacaClient
 from agentic_portfolio_lab.infrastructure.sqlite_local_state import SQLiteLocalRunStore, SQLiteMvpReadState, SQLiteOverviewBootstrapState, SQLitePriceRefreshState, SQLiteResearchBatchState
 from agentic_portfolio_lab.infrastructure.twelve_data import TwelveDataMarketPriceProvider
 
@@ -44,6 +54,7 @@ def create_app(
     review_decision_service: ReviewDecisionService | None = None,
     decision_approval_service: DecisionApprovalService | None = None,
     managed_execution_service: ManagedPaperExecutionService | None = None,
+    v2_preparation_service: V2WeeklyPreparationService | None = None,
 ) -> FastAPI:
     """Create the HTTP adapter with explicit, replaceable application state."""
     if state is not None and database_path is not None:
@@ -83,6 +94,18 @@ def create_app(
         state=SQLiteOverviewBootstrapState(store) if store is not None else _UnavailableOverviewState(),
         universe=VALUE_US_EQUITIES_V1,
     )
+    v2_cycle = V2WeeklyCycleService(store, now=lambda: datetime.now(timezone.utc)) if store is not None else None
+    v2_readiness_reason = "DURABLE_STATE_UNAVAILABLE" if store is None else None
+    if v2_preparation_service is None and store is not None:
+        selector = tuple(os.environ.get(name, "").strip() for name in ("V2_SCREENING_MANAGER_ID", "V2_SCREENING_PROFILE_NAME", "V2_SCREENING_PROFILE_VERSION"))
+        credentials = all(os.environ.get(name, "").strip() for name in ("ALPACA_API_KEY_ID", "ALPACA_API_SECRET_KEY", "ALPHA_VANTAGE_API_KEY", "OPENAI_API_KEY"))
+        if not all(selector): v2_readiness_reason = "SCREENING_PROFILE_UNCONFIGURED"
+        elif store.load_screening_profile(ScreeningProfileIdentity(*selector)) is None: v2_readiness_reason = "SCREENING_PROFILE_NOT_FOUND"
+        elif not credentials: v2_readiness_reason = "PROVIDER_UNCONFIGURED"
+        else:
+            profile = ScreeningProfileIdentity(*selector)
+            market = AlpacaClient()
+            v2_preparation_service = V2WeeklyPreparationService(v2_cycle, RefreshUniverseService(provider=market, state=store), ScreenUniverseV2Service(store, market), BuildResearchV3Service(provider=AlphaVantageResearchProvider(), store=None), OpenAIValueManager(), MarketDataV2PriceSnapshotProvider(market), V2ManagerRiskService(load_active_value_policy().manager_risk_constitution), OpenAIV2Reviewer(), profile, lambda: datetime.now(timezone.utc))
     app.include_router(
         create_router(
             source,
@@ -101,7 +124,9 @@ def create_app(
             managed_execution_service=managed_execution_service
             or (ManagedPaperExecutionService(store) if store is not None else None),
             revision_service=ReviseDecisionCycleService(store) if store is not None else None,
-            v2_cycle_service=V2WeeklyCycleService(store, now=lambda: datetime.now(timezone.utc)) if store is not None else None,
+            v2_cycle_service=v2_cycle,
+            v2_preparation_service=v2_preparation_service,
+            v2_readiness_reason=v2_readiness_reason,
         )
     )
     return app

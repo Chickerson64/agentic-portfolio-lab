@@ -26,6 +26,8 @@ const {
   executePaperTrade,
   isExecutionEnabled,
   bindShellCommands,
+  normalizeV2Readiness,
+  renderV2Cycle,
 } = await import("./app.js");
 
 const security = (ticker = "MSFT") => ({ ticker, security_type: "EQUITY", exchange: "NASDAQ", currency: "USD" });
@@ -108,6 +110,8 @@ const readyWeeklyRunReadiness = () => ({
   next_action: "EXECUTE_PAPER_TRADE",
   blockers: [],
 });
+const v2Readiness = (ready = true, reasonCode = null) => ({ ready, reason_code: reasonCode });
+assert.deepEqual(normalizeV2Readiness(v2Readiness(false, "PROVIDER_UNCONFIGURED")), { ready: false, reasonCode: "PROVIDER_UNCONFIGURED" });
 
 const normalizedChecklist = normalizeWeeklyRunReadiness(readyWeeklyRunReadiness());
 assert.equal(normalizedChecklist.steps.length, 7);
@@ -341,6 +345,7 @@ const renderDecisionCenter = async (rawDecision, label, dashboardPayload = dashb
       "/portfolio": portfolio(),
       "/performance": dashboard().performance,
       "/weekly-run/readiness": weeklyRunReadiness(),
+      "/v2/readiness": v2Readiness(),
     };
     if (path === "/price-refresh/latest") return { status: 404, ok: false, json: async () => null };
     return { status: 200, ok: true, json: async () => payloads[path] };
@@ -652,6 +657,7 @@ globalThis.fetch = async (url) => {
     "/portfolio": portfolio(),
     "/performance": dashboard().performance,
     "/weekly-run/readiness": weeklyRunReadiness(),
+    "/v2/readiness": v2Readiness(),
   };
   return { status: 200, ok: true, json: async () => payloads[path] };
 };
@@ -659,6 +665,34 @@ const stateWithoutLatestResources = await loadApplication();
 assert.equal(stateWithoutLatestResources.decision, null);
 assert.equal(stateWithoutLatestResources.research, null);
 assert.deepEqual(stateWithoutLatestResources.history, { entries: [], chartPoints: [] });
+
+// V2 Start is a server command only: the client supplies no target, price,
+// review, approval, or execution artifacts.
+const startButton = { listener: null, addEventListener(_event, listener) { this.listener = listener; } };
+const v2Node = { innerHTML: "", querySelector(selector) { return selector === "#v2-start" ? startButton : null; } };
+const v2Status = { textContent: "" };
+globalThis.document = { querySelector: (selector) => ({ "#v2-cycle": v2Node, "#health-status": v2Status }[selector] ?? null) };
+let v2Posts = 0;
+globalThis.fetch = async () => { v2Posts += 1; throw new Error("unreachable"); };
+renderV2Cycle(null, { ready: false, reasonCode: "PROVIDER_UNCONFIGURED" });
+assert.match(v2Node.innerHTML, /V2 Start unavailable: PROVIDER_UNCONFIGURED/);
+assert.match(v2Node.innerHTML, /disabled/);
+await startButton.listener();
+assert.equal(v2Posts, 0);
+
+let selectedPath = null;
+globalThis.window.location.pathname = "/";
+globalThis.window.history = { replaceState(_state, _title, path) { selectedPath = path; } };
+globalThis.fetch = async (_url, options) => {
+  if (options?.method === "POST") { v2Posts += 1; return { ok: true, status: 200, json: async () => ({ cycle_id: "new-cycle" }) }; }
+  return { ok: false, status: 500, json: async () => ({ detail: { message: "reload unavailable" } }) };
+};
+renderV2Cycle(null, { ready: true, reasonCode: null });
+await startButton.listener();
+assert.equal(v2Posts, 1);
+assert.equal(selectedPath, "/?v2_cycle=new-cycle");
+assert.match(v2Status.textContent, /V2 Start failed/);
+delete globalThis.document;
 
 globalThis.fetch = async () => ({ status: 404, ok: false });
 await assert.rejects(

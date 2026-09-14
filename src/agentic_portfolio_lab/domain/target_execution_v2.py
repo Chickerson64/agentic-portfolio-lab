@@ -133,11 +133,20 @@ class BatchTradePlan:
 
 def derive_batch_trade_plan(target: PortfolioTargetAllocation, portfolio: Portfolio, snapshot: V2PriceSnapshot, *, created_at: datetime) -> BatchTradePlan:
     """Derive exact 8dp legs without changing any manager-supplied weight."""
-    if target.portfolio_id != portfolio.portfolio_id: raise ValueError("target portfolio must match portfolio")
-    legs = _derive_legs(target, portfolio, snapshot)
-    plan = BatchTradePlan(target, portfolio, snapshot, tuple(legs), created_at)
+    plan = build_batch_trade_plan(target, portfolio, snapshot, created_at=created_at)
     validate_batch_plan(plan)
     return plan
+
+
+def build_batch_trade_plan(target: PortfolioTargetAllocation, portfolio: Portfolio, snapshot: V2PriceSnapshot, *, created_at: datetime) -> BatchTradePlan:
+    """Build the exact diff before the hard System Safety evaluation.
+
+    This is intentionally public so a failed safety result can still retain
+    the immutable target and candidate plan for operator audit.
+    """
+    if target.portfolio_id != portfolio.portfolio_id: raise ValueError("target portfolio must match portfolio")
+    legs = _derive_legs(target, portfolio, snapshot)
+    return BatchTradePlan(target, portfolio, snapshot, tuple(legs), created_at)
 
 
 def _derive_legs(target: PortfolioTargetAllocation, portfolio: Portfolio, snapshot: V2PriceSnapshot) -> list[BatchTradeLeg]:
@@ -197,6 +206,37 @@ def validate_batch_plan(plan: BatchTradePlan) -> None:
 
 
 @dataclass(frozen=True, slots=True)
+class BatchSystemSafetyResult:
+    """Durable result from the actual V2 hard safety validator."""
+    plan: BatchTradePlan
+    evaluated_at: datetime
+    passed: bool
+    reason: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.plan, BatchTradePlan):
+            raise TypeError("plan must be BatchTradePlan")
+        _require_aware_datetime(self.evaluated_at, field_name="evaluated_at")
+        if self.passed and self.reason is not None:
+            raise ValueError("a passed System Safety result has no failure reason")
+        if not self.passed and (not isinstance(self.reason, str) or not self.reason.strip()):
+            raise ValueError("a failed System Safety result requires a reason")
+
+    @property
+    def identity(self) -> str:
+        return _digest((self.plan.identity, self.evaluated_at, self.passed, self.reason))
+
+
+def evaluate_batch_plan_safety(plan: BatchTradePlan, *, evaluated_at: datetime) -> BatchSystemSafetyResult:
+    """Run the authoritative V2 System Safety validator and retain its result."""
+    try:
+        validate_batch_plan(plan)
+    except ValueError as error:
+        return BatchSystemSafetyResult(plan, evaluated_at, False, str(error))
+    return BatchSystemSafetyResult(plan, evaluated_at, True)
+
+
+@dataclass(frozen=True, slots=True)
 class BatchApproval:
     plan: BatchTradePlan
     decision_maker_id: str
@@ -215,6 +255,35 @@ class BatchApproval:
         if not isinstance(self.decision_maker_id, str) or not self.decision_maker_id.strip(): raise ValueError("decision_maker_id must not be empty")
         _require_aware_datetime(self.decided_at, field_name="decided_at")
         if self.decided_at < self.plan.created_at: raise ValueError("approval must not precede plan")
+        object.__setattr__(self, "binding", _digest((self.plan.target_identity, self.plan.identity, self.plan.portfolio_identity, self.plan.price_snapshot.identity)))
+
+
+@dataclass(frozen=True, slots=True)
+class BatchRejection:
+    """An immutable human rejection of one exact V2 plan.
+
+    Rejection deliberately binds the same plan identity as approval.  It is an
+    audit fact, not a second cycle lifecycle state.
+    """
+    plan: BatchTradePlan
+    decision_maker_id: str
+    decided_at: datetime
+    reason: str | None = None
+    rejection_id: UUID = field(default_factory=uuid4)
+    binding: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.plan, BatchTradePlan):
+            raise TypeError("plan must be BatchTradePlan")
+        if not self.plan.legs:
+            raise ValueError("an empty batch plan is a no-action outcome and cannot be rejected")
+        if not isinstance(self.decision_maker_id, str) or not self.decision_maker_id.strip():
+            raise ValueError("decision_maker_id must not be empty")
+        _require_aware_datetime(self.decided_at, field_name="decided_at")
+        if self.decided_at < self.plan.created_at:
+            raise ValueError("rejection must not precede plan")
+        if self.reason is not None and (not isinstance(self.reason, str) or not self.reason.strip()):
+            raise ValueError("reason must be nonblank when supplied")
         object.__setattr__(self, "binding", _digest((self.plan.target_identity, self.plan.identity, self.plan.portfolio_identity, self.plan.price_snapshot.identity)))
 
 

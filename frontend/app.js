@@ -297,10 +297,18 @@ export function normalizeWeeklyRunReadiness(payload) {
   };
 }
 
+export function normalizeV2Readiness(payload) {
+  const context = "v2 readiness";
+  return {
+    ready: boolean(field(payload, "ready", context), `${context}.ready`),
+    reasonCode: nullableText(field(payload, "reason_code", context), `${context}.reason_code`),
+  };
+}
+
 export function normalizeV2Cycle(payload) {
   if (payload === null) return null;
   record(payload, "v2 cycle");
-  return { cycleId: text(field(payload, "cycle_id", "v2 cycle"), "v2 cycle.cycle_id"), readiness: record(field(payload, "readiness", "v2 cycle"), "v2 cycle.readiness"), current: record(field(payload, "current_portfolio", "v2 cycle"), "v2 cycle.current_portfolio"), target: record(field(payload, "target", "v2 cycle"), "v2 cycle.target"), plan: record(field(payload, "plan", "v2 cycle"), "v2 cycle.plan"), safety: record(field(payload, "system_safety", "v2 cycle"), "v2 cycle.system_safety"), managerRisk: record(field(payload, "manager_risk", "v2 cycle"), "v2 cycle.manager_risk"), reviewer: field(payload, "ai_reviewer", "v2 cycle"), approval: field(payload, "approval", "v2 cycle"), execution: field(payload, "execution", "v2 cycle"), reconciliation: field(payload, "reconciliation", "v2 cycle"), performance: field(payload, "performance", "v2 cycle"), audit: record(field(payload, "audit", "v2 cycle"), "v2 cycle.audit") };
+  return { cycleId: text(field(payload, "cycle_id", "v2 cycle"), "v2 cycle.cycle_id"), readiness: record(field(payload, "readiness", "v2 cycle"), "v2 cycle.readiness"), current: record(field(payload, "current_portfolio", "v2 cycle"), "v2 cycle.current_portfolio"), target: record(field(payload, "target", "v2 cycle"), "v2 cycle.target"), plan: record(field(payload, "plan", "v2 cycle"), "v2 cycle.plan"), safety: record(field(payload, "system_safety", "v2 cycle"), "v2 cycle.system_safety"), managerRisk: record(field(payload, "manager_risk", "v2 cycle"), "v2 cycle.manager_risk"), reviewer: field(payload, "ai_reviewer", "v2 cycle"), approval: field(payload, "approval", "v2 cycle"), rejection: payload.rejection ?? null, execution: field(payload, "execution", "v2 cycle"), reconciliation: field(payload, "reconciliation", "v2 cycle"), performance: field(payload, "performance", "v2 cycle"), audit: record(field(payload, "audit", "v2 cycle"), "v2 cycle.audit") };
 }
 
 export function normalizeDecision(payload) {
@@ -551,7 +559,7 @@ export function normalizeBootstrapOverview(payload) {
 
 export async function loadApplication() {
   const cycleId = new URLSearchParams(window.location.search).get("v2_cycle");
-  const [health, dashboard, decision, research, history, portfolio, performance, priceRefresh, weeklyRunReadiness, v2Cycle] = await Promise.all([
+  const [health, dashboard, decision, research, history, portfolio, performance, priceRefresh, weeklyRunReadiness, v2Readiness, v2Cycle] = await Promise.all([
     apiClient.get("/health"),
     apiClient.get("/dashboard"),
     apiClient.get("/decisions/latest", { allowNotFound: true }),
@@ -561,7 +569,8 @@ export async function loadApplication() {
     apiClient.get("/performance"),
     apiClient.get("/price-refresh/latest", { allowNotFound: true }),
     apiClient.get("/weekly-run/readiness"),
-    cycleId ? apiClient.get(`/v2/cycles/${encodeURIComponent(cycleId)}`) : Promise.resolve(null),
+    apiClient.get("/v2/readiness"),
+    cycleId ? apiClient.get(`/v2/cycles/${encodeURIComponent(cycleId)}`) : apiClient.get("/v2/cycles/latest", { allowNotFound: true }).then((cycle) => cycle?.cycle_id ? cycle : null),
   ]);
   return {
     health: normalizeHealth(health),
@@ -573,6 +582,7 @@ export async function loadApplication() {
     performance: normalizePerformance(performance, "performance"),
     priceRefresh: normalizePriceRefreshStatus(priceRefresh),
     weeklyRunReadiness: normalizeWeeklyRunReadiness(weeklyRunReadiness),
+    v2Readiness: normalizeV2Readiness(v2Readiness),
     v2Cycle: normalizeV2Cycle(v2Cycle),
   };
 }
@@ -829,21 +839,22 @@ function bindAuditLinks() {
   }));
 }
 function empty(title, message) { return `<section class="empty-state"><span class="kicker">No data</span><h1>${esc(title)}</h1><p>${esc(message)}</p></section>`; }
-export function renderV2Cycle(cycle) {
+export function renderV2Cycle(cycle, readiness = { ready: false, reasonCode: "V2_PREPARATION_UNCONFIGURED" }) {
   const node = document.querySelector("#v2-cycle");
   if (!node) return;
-  if (!cycle) { node.innerHTML = empty("No V2 cycle selected", "Use ?v2_cycle=<cycle id> to inspect an immutable weekly target."); return; }
+  if (!cycle) { const unavailable = !readiness.ready; node.innerHTML = `<div class="empty"><h2>No V2 cycle prepared</h2><p>Start the configured weekly preparation flow to create an immutable target for review.</p>${unavailable ? `<p class="muted">V2 Start unavailable: ${esc(readiness.reasonCode || "V2_PREPARATION_UNCONFIGURED")}</p>` : ""}<button class="refresh-button" id="v2-start"${unavailable ? " disabled" : ""}>Start V2 cycle</button></div>`; node.querySelector("#v2-start")?.addEventListener("click", async () => { if (!readiness.ready) return; try { const created = await apiClient.post("/v2/cycles"); window.history.replaceState({}, "", `${window.location.pathname}?v2_cycle=${encodeURIComponent(created.cycle_id)}`); await start(); } catch (error) { refreshStatus = `V2 Start failed: ${error.message}`; const status = document.querySelector("#health-status"); if (status) status.textContent = refreshStatus; } }); return; }
   const positions = cycle.target.positions.map((p) => `<tr><td>${esc(p.security.ticker)}</td><td>${esc(p.weight)}</td><td>${esc(p.disposition)}</td><td>${esc(p.thesis)}</td><td>${esc(p.evidence.map((e) => e.evidence_id).join(", "))}</td></tr>`).join("");
   const legs = cycle.plan.legs.map((p) => `<li>${esc(p.action)} ${esc(p.security.ticker)} · ${esc(p.quantity)} @ ${esc(p.price)}</li>`).join("") || "<li>No executable trades — completed no-action outcome.</li>";
-  const approval = cycle.approval ? `<p>Approved by ${esc(cycle.approval.decision_maker_id)} against binding ${esc(cycle.approval.binding)}</p>${!cycle.execution ? `<button class="refresh-button" id="v2-execute">Execute approved internal paper batch</button>` : ""}` : cycle.readiness.available_next?.includes("human_approval") ? `<button class="refresh-button" id="v2-approve">Approve exact batch</button>` : "<p>No approval artifact.</p>";
+  const approval = cycle.approval ? `<p>Approved by ${esc(cycle.approval.decision_maker_id)} against binding ${esc(cycle.approval.binding)}</p>${!cycle.execution ? `<button class="refresh-button" id="v2-execute">Execute approved internal paper batch</button>` : ""}` : cycle.rejection ? `<p>Rejected by ${esc(cycle.rejection.decision_maker_id)} against binding ${esc(cycle.rejection.binding)}${cycle.rejection.reason ? `: ${esc(cycle.rejection.reason)}` : ""}</p>` : cycle.readiness.available_next?.includes("human_approval") ? `<button class="refresh-button" id="v2-approve">Approve exact batch</button> <button class="quiet-button outline" id="v2-reject">Reject exact batch</button>` : "<p>No human decision artifact.</p>";
   node.innerHTML = `<div class="page-heading"><div><span class="kicker">V2 weekly cycle</span><h1>Complete target allocation</h1><p>Backend-owned allocation, classifications, approvals, and accounting.</p></div><div class="cycle-id"><strong>${esc(cycle.cycleId)}</strong><small>${esc(cycle.audit.plan_identity)}</small></div></div><section class="two-col"><article class="surface"><span class="kicker">Current portfolio</span><h2>Cash ${esc(cycle.current.cash)}</h2><p>${esc(cycle.current.positions.map((p) => `${p.security.ticker} ${p.quantity}`).join(" · ") || "All cash")}</p></article><article class="surface"><span class="kicker">Target totals</span><h2>Securities + explicit cash = ${esc(cycle.target.total_weight)}</h2><p>${esc(cycle.target.cash.weight)} ${esc(cycle.target.cash.classification)} cash — ${esc(cycle.target.cash.rationale)}</p></article></section><article class="surface"><span class="kicker">Target positions / evidence</span><table class="holdings"><thead><tr><th>Security</th><th>Weight</th><th>Change</th><th>Rationale</th><th>Evidence</th></tr></thead><tbody>${positions}</tbody></table></article><section class="two-col"><article class="surface"><span class="kicker">Reviews</span><h2>System Safety: ${esc(cycle.safety.passed)}</h2><p>Manager Risk: ${esc(cycle.managerRisk.status)}</p><p>AI Reviewer: ${esc(cycle.reviewer?.status || "Not recorded")}</p></article><article class="surface"><span class="kicker">Exact paper plan</span><h2>${esc(cycle.plan.identity)}</h2><ul>${legs}</ul>${approval}${cycle.execution ? `<p>Internal simulator executed ${esc(cycle.execution.execution_id)}</p>` : ""}</article></section><article class="surface"><span class="kicker">Reconciliation / SPY / audit</span><p>${esc(JSON.stringify({ reconciliation: cycle.reconciliation, performance: cycle.performance, audit: cycle.audit }))}</p></article>`;
   node.querySelector("#v2-approve")?.addEventListener("click", async () => { await apiClient.post(`/v2/cycles/${encodeURIComponent(cycle.cycleId)}/approve`, { decision_maker_id: "local-operator", decided_at: new Date().toISOString() }); await start(); });
+  node.querySelector("#v2-reject")?.addEventListener("click", async () => { await apiClient.post(`/v2/cycles/${encodeURIComponent(cycle.cycleId)}/reject`, { decision_maker_id: "local-operator", decided_at: new Date().toISOString(), reason: "Operator rejected exact batch" }); await start(); });
   node.querySelector("#v2-execute")?.addEventListener("click", async () => { await apiClient.post(`/v2/cycles/${encodeURIComponent(cycle.cycleId)}/execute?executed_at=${encodeURIComponent(new Date().toISOString())}`); await start(); });
 }
 function render(state) {
   app.innerHTML = nav(); document.querySelector("#portfolio-name").textContent = state.dashboard.portfolio.portfolioName;
   document.querySelector("#health-status").textContent = refreshStatus || refreshSummary(state.priceRefresh) || `${state.health.stateMode} · ${state.health.persisted ? "persisted" : "in-memory"}${state.health.synthetic ? " · demo" : ""}`;
-  renderOverview(state); renderV2Cycle(state.v2Cycle); renderDecision(state); renderResearch(state); renderPortfolio(state); renderHistory(state); bindCurrentTimeButtons(); bindAuditLinks();
+  renderOverview(state); renderV2Cycle(state.v2Cycle, state.v2Readiness); renderDecision(state); renderResearch(state); renderPortfolio(state); renderHistory(state); bindCurrentTimeButtons(); bindAuditLinks();
   document.querySelectorAll("[data-view],[data-view-jump]").forEach((button) => button.addEventListener("click", () => { const view = button.dataset.view || button.dataset.viewJump; document.querySelectorAll(".view").forEach((section) => section.classList.toggle("active", section.id === view)); document.querySelectorAll("[data-view]").forEach((node) => node.classList.toggle("active", node.dataset.view === view)); }));
 }
 

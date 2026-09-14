@@ -44,6 +44,7 @@ from .models import (
     ExecutePaperTradeResponse,
     security_response,
     V2ApprovalCommand,
+    V2RejectionCommand,
     V2CycleResponse,
 )
 from .queries import DecisionCycleNotFound, LatestResourceNotFound, MvpQueryService, MvpReadState
@@ -80,6 +81,8 @@ def create_router(
     managed_execution_service: ManagedPaperExecutionService | None = None,
     revision_service: ReviseDecisionCycleService | None = None,
     v2_cycle_service: V2WeeklyCycleService | None = None,
+    v2_preparation_service=None,
+    v2_readiness_reason: str | None = None,
 ) -> APIRouter:
     router = APIRouter()
 
@@ -103,19 +106,48 @@ def create_router(
             screening={"screening_run_id": str(cycle.screening.screening_run_id), "universe_snapshot_id": cycle.screening.universe_snapshot_id},
             research={"batch_id": cycle.research.batch_id, "screening_run_id": str(cycle.research.screening_run_id), "snapshot_id": cycle.research.snapshot_id},
             plan={"plan_id": str(cycle.plan.plan_id), "identity": cycle.plan.identity, "legs": tuple({"security": security(x.security), "action": x.action.value, "quantity": format(x.quantity, "f"), "price": format(x.price, "f"), "target_weight": format(x.target_weight, "f")} for x in cycle.plan.legs)},
-            system_safety={"passed": cycle.system_safety_passed, "source": "deterministic target diff validation"}, manager_risk={"status": cycle.manager_risk_status}, ai_reviewer=None if cycle.reviewer_status is None else {"status": cycle.reviewer_status, "rationale": cycle.reviewer_rationale},
+            system_safety={"passed": cycle.system_safety.passed, "identity": cycle.system_safety.identity, "reason": cycle.system_safety.reason, "source": "V2 System Safety validator"}, manager_risk={"status": cycle.manager_risk.status.value, "constitution_version": cycle.manager_risk.constitution.risk_constitution_version.value, "target_identity": cycle.manager_risk.target_identity, "plan_identity": cycle.manager_risk.plan_identity, "findings": cycle.manager_risk.findings, "rationale": cycle.manager_risk.rationale, "provider_identity": cycle.manager_risk.provider_identity}, ai_reviewer=None if cycle.reviewer is None else {"status": cycle.reviewer.status.value, "target_identity": cycle.reviewer.target_identity, "plan_identity": cycle.reviewer.plan_identity, "findings": cycle.reviewer.findings, "rationale": cycle.reviewer.rationale, "reviewer_identity": cycle.reviewer.reviewer_identity, "reviewer_version": cycle.reviewer.reviewer_version, "provider_identity": cycle.reviewer.provider_identity, "model": cycle.reviewer.model},
             approval=None if cycle.approval is None else {"approval_id": str(cycle.approval.approval_id), "binding": cycle.approval.binding, "decision_maker_id": cycle.approval.decision_maker_id, "decided_at": cycle.approval.decided_at.isoformat()}, execution=execution,
+            rejection=None if cycle.rejection is None else {"rejection_id": str(cycle.rejection.rejection_id), "binding": cycle.rejection.binding, "decision_maker_id": cycle.rejection.decision_maker_id, "decided_at": cycle.rejection.decided_at.isoformat(), "reason": cycle.rejection.reason},
             reconciliation=None if cycle.execution is None else {"resulting_portfolio": portfolio(cycle.execution.resulting_portfolio), "reconciled_at": cycle.reconciled_at.isoformat() if cycle.reconciled_at else None}, performance=None if service().performance() is None else service().performance().model_dump(), audit={"universe_snapshot_id": cycle.universe_snapshot_id, "target_identity": cycle.plan.target_identity, "plan_identity": cycle.plan.identity})
 
     @router.get("/v2/cycles/{cycle_id}", response_model=V2CycleResponse)
     def get_v2_cycle(cycle_id: UUID) -> V2CycleResponse:
         return v2_response(cycle_id)
 
+    @router.get("/v2/cycles/latest", response_model=V2CycleResponse)
+    def latest_v2_cycle() -> V2CycleResponse:
+        if v2_cycle_service is None: raise HTTPException(status_code=503, detail="V2 cycles require configured local SQLite state")
+        state = v2_cycle_service._state()
+        if not state.v2_cycles: raise HTTPException(status_code=404, detail={"code": "v2_cycle_not_found", "message": "no V2 cycle has been prepared"})
+        return v2_response(state.v2_cycles[-1].cycle_id)
+
+    @router.post("/v2/cycles", response_model=V2CycleResponse)
+    def prepare_v2_cycle() -> V2CycleResponse:
+        if v2_preparation_service is None:
+            raise HTTPException(status_code=503, detail={"code": "v2_preparation_unconfigured", "message": "V2 preparation requires configured universe, market-data, research, manager, and advisory services"})
+        try:
+            cycle = v2_preparation_service.prepare()
+        except (TypeError, ValueError) as error:
+            raise HTTPException(status_code=503, detail={"code": "v2_preparation_unavailable", "message": str(error)}) from error
+        return v2_response(cycle.cycle_id)
+
+    @router.get("/v2/readiness")
+    def v2_readiness() -> dict[str, object]:
+        return {"ready": v2_preparation_service is not None, "reason_code": None if v2_preparation_service is not None else (v2_readiness_reason or "V2_PREPARATION_UNCONFIGURED")}
+
     @router.post("/v2/cycles/{cycle_id}/approve", response_model=V2CycleResponse)
     def approve_v2_cycle(cycle_id: UUID, command: V2ApprovalCommand) -> V2CycleResponse:
         if v2_cycle_service is None: raise HTTPException(status_code=503, detail="V2 cycles require configured local SQLite state")
         try: v2_cycle_service.approve(cycle_id, decision_maker_id=command.decision_maker_id, decided_at=command.decided_at)
         except ValueError as error: raise HTTPException(status_code=409, detail={"code": "v2_approval_ineligible", "message": str(error)}) from error
+        return v2_response(cycle_id)
+
+    @router.post("/v2/cycles/{cycle_id}/reject", response_model=V2CycleResponse)
+    def reject_v2_cycle(cycle_id: UUID, command: V2RejectionCommand) -> V2CycleResponse:
+        if v2_cycle_service is None: raise HTTPException(status_code=503, detail="V2 cycles require configured local SQLite state")
+        try: v2_cycle_service.reject(cycle_id, decision_maker_id=command.decision_maker_id, decided_at=command.decided_at, reason=command.reason)
+        except ValueError as error: raise HTTPException(status_code=409, detail={"code": "v2_rejection_ineligible", "message": str(error)}) from error
         return v2_response(cycle_id)
 
     @router.post("/v2/cycles/{cycle_id}/execute", response_model=V2CycleResponse)
