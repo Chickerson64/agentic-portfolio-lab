@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Protocol, Sequence
+from typing import Mapping, Protocol, Sequence, runtime_checkable
 
 from .portfolio import SecurityIdentity, _require_aware_datetime, _require_date, _require_non_empty_text, _require_positive_decimal
 
@@ -69,3 +69,17 @@ class MarketDataProvider(Protocol):
     def get_daily_bars(self, security: SecurityIdentity, *, start: date, end: date) -> Sequence[DailyBar]: ...
 
     def get_current_quote(self, security: SecurityIdentity) -> CurrentQuote: ...
+
+
+@runtime_checkable
+class BatchDailyBarsProvider(Protocol):
+    """Optional capability for one historical daily-bars request over many symbols.
+
+    The mapping must contain every requested ticker; an empty sequence records
+    an explicit provider history miss without making it indistinguishable from
+    a provider that omitted a requested symbol.
+    """
+
+    def get_daily_bars_batch(
+        self, securities: Sequence[SecurityIdentity], *, start: date, end: date
+    ) -> Mapping[str, Sequence[DailyBar]]: ...

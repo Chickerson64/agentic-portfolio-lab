@@ -18,6 +18,14 @@ from agentic_portfolio_lab.domain.universe_snapshots import EligibilityOutcome, 
 
 ASSETS_URL = "https://paper-api.alpaca.markets/v2/assets"
 DATA_URL = "https://data.alpaca.markets/v2/stocks"
+# 100 daily symbols keeps a URL comfortably small even for twelve-character
+# symbols, while a roughly three-month screening lookback normally fits below
+# Alpaca's 10,000-bar page limit. Pagination remains mandatory and authoritative.
+DAILY_BAR_SYMBOL_BATCH_SIZE = 100
+HISTORICAL_FEED_ENVIRONMENT_VARIABLE = "ALPACA_HISTORICAL_FEED"
+# These are the stock-historical-bars feeds documented by Alpaca.  Latest
+# quote feeds are intentionally configured separately and remain unchanged.
+SUPPORTED_HISTORICAL_BAR_FEEDS = frozenset({"iex", "sip", "boats", "otc"})
 JsonTransport = Callable[[str, Mapping[str, str]], object]
 _RFC3339 = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$")
 
@@ -103,6 +111,16 @@ class AlpacaClient(MarketDataProvider):
         return key_id, secret
 
     @staticmethod
+    def _historical_feed() -> str:
+        configured = os.environ.get(HISTORICAL_FEED_ENVIRONMENT_VARIABLE, "iex")
+        if not isinstance(configured, str) or not configured.strip():
+            raise MarketDataConfigurationError(f"{HISTORICAL_FEED_ENVIRONMENT_VARIABLE} must select a supported historical stock feed")
+        feed = configured.strip().lower()
+        if feed not in SUPPORTED_HISTORICAL_BAR_FEEDS:
+            raise MarketDataConfigurationError(f"{HISTORICAL_FEED_ENVIRONMENT_VARIABLE} must be one of: {', '.join(sorted(SUPPORTED_HISTORICAL_BAR_FEEDS))}")
+        return feed
+
+    @staticmethod
     def _request(url: str, headers: Mapping[str, str]) -> object:
         try:
             with urlopen(Request(url, headers=dict(headers)), timeout=20) as response:  # noqa: S310 -- fixed provider HTTPS URLs
@@ -151,7 +169,7 @@ class AlpacaClient(MarketDataProvider):
             raise TypeError("security must be a SecurityIdentity")
         if isinstance(start, datetime) or isinstance(end, datetime) or not isinstance(start, date) or not isinstance(end, date) or start > end:
             raise ValueError("daily-bar date range is invalid")
-        params: dict[str, str] = {"timeframe": "1Day", "start": start.isoformat(), "end": end.isoformat(), "feed": "iex"}
+        params: dict[str, str] = {"timeframe": "1Day", "start": start.isoformat(), "end": end.isoformat(), "feed": self._historical_feed()}
         raw_bars: list[object] = []
         seen_tokens: set[str] = set()
         while True:
@@ -178,6 +196,64 @@ class AlpacaClient(MarketDataProvider):
         if any(value < start or value > end for value in dates) or dates != tuple(sorted(dates)) or len(set(dates)) != len(dates):
             raise MarketDataError("Alpaca bars response has invalid date ordering or range")
         return bars
+
+    def get_daily_bars_batch(
+        self, securities: Sequence[SecurityIdentity], *, start: date, end: date
+    ) -> Mapping[str, Sequence[DailyBar]]:
+        """Fetch historical daily bars in bounded multi-symbol Alpaca requests.
+
+        Alpaca sorts multi-symbol pages by symbol then timestamp, and a page can
+        therefore contain only part of one requested symbol.  Each symbol batch
+        is exhausted before parsing and validating its complete histories.
+        """
+        if isinstance(start, datetime) or isinstance(end, datetime) or not isinstance(start, date) or not isinstance(end, date) or start > end:
+            raise ValueError("daily-bar date range is invalid")
+        requested = tuple(securities)
+        if not requested or not all(isinstance(item, SecurityIdentity) for item in requested):
+            raise ValueError("securities must be a non-empty sequence of SecurityIdentity")
+        requested = tuple(sorted(requested, key=lambda item: item.ticker))
+        by_ticker = {item.ticker: item for item in requested}
+        if len(by_ticker) != len(requested):
+            raise ValueError("daily-bar batch securities must have unique tickers")
+        histories: dict[str, list[DailyBar]] = {ticker: [] for ticker in by_ticker}
+        for offset in range(0, len(requested), DAILY_BAR_SYMBOL_BATCH_SIZE):
+            batch = requested[offset:offset + DAILY_BAR_SYMBOL_BATCH_SIZE]
+            params: dict[str, str] = {
+                "symbols": ",".join(item.ticker for item in batch), "timeframe": "1Day",
+                "start": start.isoformat(), "end": end.isoformat(), "feed": self._historical_feed(), "limit": "10000",
+            }
+            allowed = {item.ticker: item for item in batch}
+            seen_tokens: set[str] = set()
+            while True:
+                raw = self._get(f"{DATA_URL}/bars?{urlencode(params)}")
+                if not isinstance(raw, dict) or any(field in raw for field in ("error", "code", "message")) or not isinstance(raw.get("bars"), dict):
+                    raise MarketDataError("Alpaca multi-symbol bars response is malformed or reported an error")
+                raw_bars = raw["bars"]
+                if any(not isinstance(ticker, str) or ticker not in allowed or not isinstance(values, list) for ticker, values in raw_bars.items()):
+                    raise MarketDataError("Alpaca multi-symbol bars response contains an unexpected symbol or history")
+                for ticker, values in raw_bars.items():
+                    try:
+                        parsed = [DailyBar(allowed[ticker], _parse_timestamp(item["t"]).date(), *(Decimal(str(item[field])) for field in ("o", "h", "l", "c")), item["v"], self.provider_identity) for item in values if isinstance(item, dict)]
+                        if len(parsed) != len(values):
+                            raise TypeError
+                    except (KeyError, TypeError, ValueError, InvalidOperation):
+                        raise MarketDataError("Alpaca multi-symbol bars response contains malformed data") from None
+                    histories[ticker].extend(parsed)
+                token = raw.get("next_page_token")
+                if token is None:
+                    break
+                if not isinstance(token, str) or not token.strip():
+                    raise MarketDataError("Alpaca bars pagination token is malformed")
+                if token in seen_tokens:
+                    raise MarketDataError("Alpaca bars pagination token repeated")
+                seen_tokens.add(token)
+                params["page_token"] = token
+        result = {ticker: tuple(values) for ticker, values in histories.items()}
+        for ticker, bars in result.items():
+            dates = tuple(bar.market_date for bar in bars)
+            if any(value < start or value > end for value in dates) or dates != tuple(sorted(dates)) or len(set(dates)) != len(dates):
+                raise MarketDataError(f"Alpaca multi-symbol bars response has invalid history for {ticker}")
+        return result
 
     def get_current_quote(self, security: SecurityIdentity) -> CurrentQuote:
         if not isinstance(security, SecurityIdentity):

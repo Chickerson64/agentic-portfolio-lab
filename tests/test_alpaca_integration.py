@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
@@ -9,7 +10,7 @@ from agentic_portfolio_lab.application.refresh_universe import RefreshUniverseSe
 from agentic_portfolio_lab.domain.market_data import MarketDataConfigurationError, MarketDataError
 from agentic_portfolio_lab.domain.portfolio import SecurityIdentity
 from agentic_portfolio_lab.domain.universe_snapshots import UniverseEligibilityRules, UniverseSnapshot
-from agentic_portfolio_lab.infrastructure.alpaca import AlpacaAssetRecord, AlpacaClient, evaluate_assets
+from agentic_portfolio_lab.infrastructure.alpaca import DAILY_BAR_SYMBOL_BATCH_SIZE, AlpacaAssetRecord, AlpacaClient, evaluate_assets
 from agentic_portfolio_lab.infrastructure.sqlite_local_state import SQLiteLocalRunStore
 
 NOW = datetime(2026, 9, 12, 15, 0, tzinfo=timezone.utc)
@@ -121,6 +122,60 @@ def test_bars_paginate_and_reject_cycles_or_malformed_tokens(monkeypatch: pytest
         else:
             with pytest.raises(MarketDataError, match="token"):
                 client.get_daily_bars(SECURITY, start=date(2026, 9, 1), end=date(2026, 9, 12))
+
+
+def test_multi_symbol_daily_bars_batch_pages_bind_symbols_and_preserve_explicit_missing_histories(monkeypatch: pytest.MonkeyPatch) -> None:
+    _credentials(monkeypatch)
+    msft = SecurityIdentity("MSFT", "US_EQUITY", "NASDAQ", "USD")
+    calls: list[dict[str, list[str]]] = []
+    pages = iter((
+        {"bars": {"AAPL": [{"t": "2026-09-10T00:00:00Z", "o": "10", "h": "12", "l": "9", "c": "11", "v": 1}]}, "next_page_token": "next"},
+        {"bars": {"MSFT": [{"t": "2026-09-11T00:00:00Z", "o": "20", "h": "22", "l": "19", "c": "21", "v": 2}]}},
+    ))
+    def transport(url, _headers):
+        calls.append(parse_qs(urlparse(url).query))
+        return next(pages)
+
+    histories = AlpacaClient(transport=transport).get_daily_bars_batch((msft, SECURITY), start=date(2026, 9, 1), end=date(2026, 9, 12))
+    assert [call["symbols"] for call in calls] == [["AAPL,MSFT"], ["AAPL,MSFT"]]
+    assert calls[0]["limit"] == ["10000"] and calls[1]["page_token"] == ["next"]
+    assert histories["AAPL"][0].security is SECURITY
+    assert histories["MSFT"][0].security is msft
+    missing = SecurityIdentity("NONE", "US_EQUITY", "NASDAQ", "USD")
+    empty = AlpacaClient(transport=lambda _url, _headers: {"bars": {}}).get_daily_bars_batch((SECURITY, missing), start=date(2026, 9, 1), end=date(2026, 9, 12))
+    assert empty == {"AAPL": (), "NONE": ()}
+
+
+def test_multi_symbol_daily_bars_use_bounded_calls_and_fail_closed_on_repeated_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
+    _credentials(monkeypatch)
+    securities = tuple(SecurityIdentity(f"S{index:03d}", "US_EQUITY", "NASDAQ", "USD") for index in range(DAILY_BAR_SYMBOL_BATCH_SIZE + 1))
+    calls: list[str] = []
+    histories = AlpacaClient(transport=lambda url, _headers: calls.append(url) or {"bars": {}}).get_daily_bars_batch(securities, start=date(2026, 9, 1), end=date(2026, 9, 12))
+    assert len(calls) == 2 < len(securities)
+    assert set(histories) == {security.ticker for security in securities}
+    repeated = AlpacaClient(transport=lambda _url, _headers: {"bars": {}, "next_page_token": "again"})
+    with pytest.raises(MarketDataError, match="repeated"):
+        repeated.get_daily_bars_batch((SECURITY,), start=date(2026, 9, 1), end=date(2026, 9, 12))
+
+
+def test_configured_historical_feed_applies_to_single_and_batch_bars_and_rejects_invalid_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    _credentials(monkeypatch)
+    monkeypatch.setenv("ALPACA_HISTORICAL_FEED", "sip")
+    requests: list[dict[str, list[str]]] = []
+    def transport(url, _headers):
+        query = parse_qs(urlparse(url).query)
+        requests.append(query)
+        return {"bars": {}} if "symbols" in query else {"bars": []}
+
+    client = AlpacaClient(transport=transport)
+    assert client.get_daily_bars(SECURITY, start=date(2026, 9, 1), end=date(2026, 9, 12)) == ()
+    assert client.get_daily_bars_batch((SECURITY,), start=date(2026, 9, 1), end=date(2026, 9, 12)) == {"AAPL": ()}
+    assert [query["feed"] for query in requests] == [["sip"], ["sip"]]
+    monkeypatch.setenv("ALPACA_HISTORICAL_FEED", "delayed_sip")
+    with pytest.raises(MarketDataConfigurationError, match="ALPACA_HISTORICAL_FEED"):
+        client.get_daily_bars(SECURITY, start=date(2026, 9, 1), end=date(2026, 9, 12))
+    with pytest.raises(MarketDataConfigurationError, match="ALPACA_HISTORICAL_FEED"):
+        client.get_daily_bars_batch((SECURITY,), start=date(2026, 9, 1), end=date(2026, 9, 12))
 
 
 def test_documented_refresh_command_is_executable_without_live_transport(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:

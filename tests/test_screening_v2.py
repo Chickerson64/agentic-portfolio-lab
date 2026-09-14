@@ -230,7 +230,7 @@ def test_v2_service_loads_only_persisted_profile_and_uses_market_data(tmp_path):
         as_of=UTC_NOW,
     )
     assert [call[0] for call in provider.calls] == [security, benchmark]
-    assert all(call[2] == UTC_NOW.date() for call in provider.calls)
+    assert all(call[2] == UTC_NOW.date() - timedelta(days=1) for call in provider.calls)
     assert store.load_screening_artifact(run.screening_run_id) == run
     assert run.profile == profile
     missing = ScreeningProfileIdentity("value-manager", "missing", "1")
@@ -244,3 +244,27 @@ def test_v2_service_loads_only_persisted_profile_and_uses_market_data(tmp_path):
         assert "profile not found" in str(error)
     else:
         raise AssertionError("service must not accept an unpersisted profile")
+
+
+def test_v2_service_prefers_optional_batch_daily_bars_and_keeps_missing_histories_explicit(tmp_path):
+    securities = tuple(SecurityIdentity(f"S{index:03d}", "EQUITY", "NASDAQ", "USD") for index in range(120))
+    snapshot = _snapshot(*securities)
+    profile = _profile()
+    store = SQLiteLocalRunStore(tmp_path / "state.db")
+    store.initialize_run(initialized_at=UTC_NOW)
+    store.save_universe_snapshot(snapshot)
+    store.save_screening_profile(profile)
+
+    class BatchMarketData:
+        def __init__(self): self.calls = []
+        def get_daily_bars_batch(self, requested, *, start, end):
+            self.calls.append((start, end))
+            return {security.ticker: (() if security.ticker == "S119" else _bars(security)) for security in requested}
+        def get_daily_bars(self, requested, *, start, end): raise AssertionError("batch-capable provider must not fall back to per-symbol calls")
+
+    provider = BatchMarketData()
+    run = ScreenUniverseV2Service(store, provider, clock=lambda: UTC_NOW).execute(snapshot_id=snapshot.snapshot_id, profile_identity=profile.identity, as_of=UTC_NOW)
+    assert provider.calls == [(UTC_NOW.date() - timedelta(days=31), UTC_NOW.date() - timedelta(days=1))]
+    # The explicit empty history is preserved into the established screening
+    # semantics rather than being silently dropped or guessed.
+    assert next(row for row in run.results if row.symbol == "S119").exclusion_reason is ScreeningExclusionReason.INSUFFICIENT_HISTORY
