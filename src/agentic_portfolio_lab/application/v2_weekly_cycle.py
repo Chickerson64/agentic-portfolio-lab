@@ -177,6 +177,7 @@ class V2WeeklyCycleService:
 
     def execute(self, cycle_id: UUID, *, executed_at: datetime) -> V2CycleArtifacts:
         state, cycle = self._cycle(cycle_id)
+        if cycle.no_action: raise ValueError("no-action V2 cycle cannot be executed")
         if cycle.approval is None: raise ValueError("V2 execution requires exact human approval")
         if cycle.rejection is not None: raise ValueError("rejected V2 cycle cannot be executed")
         if cycle.execution is not None: raise ValueError("V2 cycle already executed")

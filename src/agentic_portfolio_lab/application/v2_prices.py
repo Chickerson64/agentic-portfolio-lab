@@ -12,6 +12,4 @@ class MarketDataV2PriceSnapshotProvider:
             quote = self._market_data.get_current_quote(security)
             price = quote.ask or quote.bid
             observations.append(PriceObservation(security, price, quote.quote_at.date(), quote.quote_at, security.currency, quote.source_provider_identity, "quote"))
-        if not observations:
-            raise ValueError("V2 target requires at least one target or holding price")
         return V2PriceSnapshot(tuple(observations))

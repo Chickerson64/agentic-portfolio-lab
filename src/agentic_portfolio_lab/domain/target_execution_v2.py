@@ -62,7 +62,11 @@ class V2PriceSnapshot:
 
     def __post_init__(self) -> None:
         observations = tuple(self.observations)
-        if not observations or not all(isinstance(item, PriceObservation) for item in observations):
+        # A snapshot has no cash instrument.  It is consequently empty only
+        # for a truthful all-cash portfolio and all-cash target.  Coverage is
+        # still checked by the target-diff derivation: every holding or target
+        # security is resolved through ``price_for`` and fails closed if absent.
+        if not all(isinstance(item, PriceObservation) for item in observations):
             raise ValueError("price snapshot requires PriceObservation values")
         keys = tuple(item.security for item in observations)
         if len(set(keys)) != len(keys): raise ValueError("price snapshot must not contain duplicate securities")

@@ -4,7 +4,7 @@ from uuid import uuid4
 
 import pytest
 
-from agentic_portfolio_lab.domain import CashBalance, CashClassification, CashTarget, ExistingHoldingDisposition, Portfolio, PortfolioTargetAllocation, PortfolioTargetPosition, Position, RecommendationEvidenceReference, SecurityIdentity, V2PriceSnapshot, BatchApproval, BatchTradeAction, derive_batch_trade_plan, execute_approved_batch
+from agentic_portfolio_lab.domain import CashBalance, CashClassification, CashTarget, ExistingHoldingDisposition, Portfolio, PortfolioTargetAllocation, PortfolioTargetPosition, Position, RecommendationEvidenceReference, SecurityIdentity, V2PriceSnapshot, BatchApproval, BatchTradeAction, build_batch_trade_plan, derive_batch_trade_plan, execute_approved_batch
 from agentic_portfolio_lab.domain.recommendations import ReviewTrigger
 from agentic_portfolio_lab.domain.valuation import PriceObservation
 
@@ -25,6 +25,25 @@ def test_buy_only_and_no_op_are_derived_at_exact_8dp_precision():
     assert tiny.legs == ()
     with pytest.raises(ValueError, match="no-action"):
         BatchApproval(tiny, "human", NOW)
+
+
+def test_all_cash_portfolio_and_target_use_deterministic_empty_snapshot_and_plan():
+    p = portfolio("100")
+    all_cash_target = target(p, [], "1")
+    first = V2PriceSnapshot(())
+    second = V2PriceSnapshot(())
+
+    plan = build_batch_trade_plan(all_cash_target, p, first, created_at=NOW)
+
+    assert first.identity == second.identity
+    assert plan.legs == ()
+
+
+def test_nonempty_target_still_requires_its_exact_security_price():
+    p = portfolio("100")
+
+    with pytest.raises(ValueError, match="price snapshot is missing AAPL"):
+        build_batch_trade_plan(target(p, [("AAPL", ".5", "INITIATE")], ".5"), p, V2PriceSnapshot(()), created_at=NOW)
 
 def test_sell_trim_and_explicit_exit_semantics():
     p = portfolio("0", pos("AAPL", "5"), pos("MSFT", "5"), pos("IBM", "5"))

@@ -64,11 +64,24 @@ def test_v2_no_action_is_terminal_without_approval_or_execution(tmp_path):
     # A zero-weight REMOVE needs a valid target position, so use the complete
     # all-cash target directly with the researched name omitted.
     target = PortfolioTargetAllocation(state.managed_portfolio.portfolio_id, "cash", "risk", "concentration", "SPY", CashTarget(Decimal("1"), CashClassification.STRATEGIC, "intentional"), ())
-    snapshot = V2PriceSnapshot((quote("AAPL", "10"),)); risk, review = advisory(state.managed_portfolio, research, target, snapshot)
+    snapshot = V2PriceSnapshot(()); risk, review = advisory(state.managed_portfolio, research, target, snapshot)
     cycle = service.record_preapproval(universe_snapshot_id="universe-offline", screening=screening, research=research, target=target, snapshot=snapshot, manager_risk=risk, reviewer=review)
-    assert cycle.no_action and cycle.readiness()["approval_status"] == "NOT_APPLICABLE"
+    assert cycle.no_action
+    assert cycle.system_safety.passed
+    assert cycle.readiness() == {
+        "completed": ("universe", "screening", "research_v3", "target", "target_diff", "system_safety", "manager_risk", "ai_reviewer"),
+        "available_next": (),
+        "blocked": ("NO_EXECUTABLE_TRADES",),
+        "terminal": True,
+        "approval_status": "NOT_APPLICABLE",
+        "execution_status": "NOT_APPLICABLE",
+    }
     with pytest.raises(ValueError, match="no-action"):
         service.approve(cycle.cycle_id, decision_maker_id="human", decided_at=NOW)
+    with pytest.raises(ValueError, match="no-action"):
+        service.execute(cycle.cycle_id, executed_at=NOW)
+    reloaded = SQLiteLocalRunStore(tmp_path / "no-action.sqlite").open_run()
+    assert reloaded is not None and reloaded.v2_cycles[0].readiness() == cycle.readiness()
 
 
 def test_v2_rejection_is_exact_terminal_and_survives_restart(tmp_path):
