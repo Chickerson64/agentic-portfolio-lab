@@ -1,9 +1,10 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from tempfile import TemporaryDirectory
 from uuid import uuid4
 
 from agentic_portfolio_lab.application.build_research_v3 import BuildResearchV3Service
+from agentic_portfolio_lab.application.v2_weekly_cycle import V2WeeklyCycleService
 from agentic_portfolio_lab.domain.portfolio import CashBalance, Portfolio, Position, SecurityIdentity
 from agentic_portfolio_lab.domain.research_provider import (
     NormalizedEarningsFacts, NormalizedIncomeFacts, NormalizedOverviewFacts,
@@ -14,6 +15,7 @@ from agentic_portfolio_lab.domain.screening_v2 import (
     ScreeningRunV2, ScreeningSecurityResult,
 )
 from agentic_portfolio_lab.infrastructure.v3_batch_store import SQLiteResearchV3Store
+from agentic_portfolio_lab.infrastructure.sqlite_local_state import SQLiteLocalRunStore
 
 
 NOW = datetime(2026, 9, 12, tzinfo=timezone.utc)
@@ -58,7 +60,9 @@ def _document(security: SecurityIdentity) -> SourceResearchDocument:
 
 
 class _DocumentProvider:
+    def __init__(self): self.calls = []
     def get_company_research(self, security):
+        self.calls.append(security)
         return _document(security)
 
 
@@ -123,3 +127,74 @@ def test_v3_sqlite_round_trip_does_not_mutate_batch():
         store = SQLiteResearchV3Store(f"{directory}/state.db")
         store.save(batch)
         assert store.load(batch.batch_id) == batch
+
+
+def test_v3_reuses_fresh_durable_company_research_without_provider_call():
+    security = _security("NEW")
+    provider = _DocumentProvider()
+    with TemporaryDirectory() as directory:
+        store = SQLiteResearchV3Store(f"{directory}/state.db")
+        BuildResearchV3Service(provider=provider, store=store, now=lambda: NOW).build(screening_run=_run(security), portfolio=_portfolio())
+        second = BuildResearchV3Service(provider=provider, store=store, now=lambda: NOW + timedelta(days=1)).build(screening_run=_run(security), portfolio=_portfolio())
+        assert provider.calls == [security]
+        assert {item.freshness for item in second.subjects[0].evidence} == {"CACHED_FRESH"}
+        assert second.subjects[0].provider_document == _document(security)
+
+
+def test_v3_refreshes_stale_company_research_and_preserves_append_only_history():
+    security = _security("NEW")
+    provider = _DocumentProvider()
+    with TemporaryDirectory() as directory:
+        store = SQLiteResearchV3Store(f"{directory}/state.db")
+        BuildResearchV3Service(provider=provider, store=store, now=lambda: NOW).build(screening_run=_run(security), portfolio=_portfolio())
+        BuildResearchV3Service(provider=provider, store=store, now=lambda: NOW + timedelta(days=8)).build(screening_run=_run(security), portfolio=_portfolio())
+        history = store.company_research_history(security)
+        assert provider.calls == [security, security]
+        assert len(history) == 2
+        assert {item.retrieved_at for item in history} == {NOW, NOW + timedelta(days=8)}
+
+
+def test_v3_keeps_full_slate_and_marks_subjects_not_retrieved_when_daily_budget_is_spent():
+    securities = tuple(_security(f"C{i}") for i in range(3))
+    provider = _DocumentProvider()
+    with TemporaryDirectory() as directory:
+        store = SQLiteResearchV3Store(f"{directory}/state.db")
+        service = BuildResearchV3Service(provider=provider, store=store, now=lambda: NOW, max_deep_research_subjects=2)
+        service.build(screening_run=_run(*securities[:2]), portfolio=_portfolio())
+        batch = service.build(screening_run=_run(*securities), portfolio=_portfolio())
+        assert provider.calls == [securities[0], securities[1]]
+        assert tuple(subject.security for subject in batch.subjects) == securities
+        assert {item.freshness for item in batch.subjects[0].evidence} == {"CACHED_FRESH"}
+        assert batch.subjects[2].evidence[0].freshness == "NOT_RETRIEVED"
+
+
+def test_v3_persists_each_successful_company_version_when_later_v2_cycle_stage_fails():
+    security = _security("NEW")
+    provider = _DocumentProvider()
+
+    class _ScreeningService:
+        def execute(self, **kwargs):
+            return _run(security)
+
+    class _FailingManager:
+        def decide_v2(self, context):
+            raise RuntimeError("manager stage failed")
+
+    with TemporaryDirectory() as directory:
+        cache = SQLiteResearchV3Store(f"{directory}/state.db")
+        local_state = SQLiteLocalRunStore(f"{directory}/local-state.db")
+        local_state.initialize_run(initialized_at=NOW)
+        cycle = V2WeeklyCycleService(local_state, now=lambda: NOW)
+        research = BuildResearchV3Service(provider=provider, store=cache, now=lambda: NOW)
+        try:
+            cycle.prepare(
+                snapshot_id="snapshot-36", profile_identity="unused", as_of=NOW,
+                screening_service=_ScreeningService(), research_service=research,
+                manager=_FailingManager(), price_snapshot=None,
+                manager_risk_service=object(), reviewer=None,
+            )
+        except RuntimeError as error:
+            assert str(error) == "manager stage failed"
+        else:
+            raise AssertionError("expected manager-stage failure")
+        assert cache.latest_company_research(security) is not None

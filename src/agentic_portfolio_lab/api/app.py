@@ -34,6 +34,7 @@ from agentic_portfolio_lab.domain.openai_v2_reviewer import OpenAIV2Reviewer
 from agentic_portfolio_lab.infrastructure.alpaca import AlpacaClient
 from agentic_portfolio_lab.infrastructure.sqlite_local_state import SQLiteLocalRunStore, SQLiteMvpReadState, SQLiteOverviewBootstrapState, SQLitePriceRefreshState, SQLiteResearchBatchState
 from agentic_portfolio_lab.infrastructure.twelve_data import TwelveDataMarketPriceProvider
+from agentic_portfolio_lab.infrastructure.v3_batch_store import SQLiteResearchV3Store
 
 from .queries import MvpReadState, MvpReadStateSnapshot
 from .routes import create_router
@@ -105,7 +106,9 @@ def create_app(
         else:
             profile = ScreeningProfileIdentity(*selector)
             market = AlpacaClient()
-            v2_preparation_service = V2WeeklyPreparationService(v2_cycle, RefreshUniverseService(provider=market, state=store), ScreenUniverseV2Service(store, market), BuildResearchV3Service(provider=AlphaVantageResearchProvider(), store=None), OpenAIValueManager(), MarketDataV2PriceSnapshotProvider(market), V2ManagerRiskService(load_active_value_policy().manager_risk_constitution), OpenAIV2Reviewer(), profile, lambda: datetime.now(timezone.utc))
+            v3_store = SQLiteResearchV3Store(configured_path)
+            budget = int(os.environ.get("V3_DAILY_DEEP_RESEARCH_SUBJECT_BUDGET", "8"))
+            v2_preparation_service = V2WeeklyPreparationService(v2_cycle, RefreshUniverseService(provider=market, state=store), ScreenUniverseV2Service(store, market), BuildResearchV3Service(provider=AlphaVantageResearchProvider(), store=v3_store, max_deep_research_subjects=budget), OpenAIValueManager(), MarketDataV2PriceSnapshotProvider(market), V2ManagerRiskService(load_active_value_policy().manager_risk_constitution), OpenAIV2Reviewer(), profile, lambda: datetime.now(timezone.utc))
     app.include_router(
         create_router(
             source,

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from dataclasses import fields
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Callable, Protocol
 from uuid import uuid4
 
@@ -12,13 +12,19 @@ from agentic_portfolio_lab.domain.research import MissingData, MissingDataReason
 from agentic_portfolio_lab.domain.research_provider import ResearchProvider, ResearchProviderError, SourceResearchDocument
 from agentic_portfolio_lab.domain.research_v3 import (
     ResearchBatchV3, ResearchSubjectRole, ResearchV3Evidence, ResearchV3Subject,
-    screening_context_for,
+    CompanyResearchVersion, screening_context_for,
 )
 from agentic_portfolio_lab.domain.screening_v2 import ScreeningRunV2
 
 
 class ResearchV3Store(Protocol):
     def save(self, batch: ResearchBatchV3) -> None: ...
+
+
+class ResearchV3CacheStore(Protocol):
+    def latest_company_research(self, security: SecurityIdentity) -> CompanyResearchVersion | None: ...
+    def save_company_research(self, version: CompanyResearchVersion) -> None: ...
+    def consume_daily_deep_research_budget(self, budget_date, *, limit: int) -> bool: ...
 
 
 def _document_evidence(security: SecurityIdentity, document: SourceResearchDocument, *, as_of: datetime) -> tuple[tuple[ResearchV3Evidence, ...], tuple[MissingData, ...], tuple[str, ...]]:
@@ -52,12 +58,14 @@ def _document_evidence(security: SecurityIdentity, document: SourceResearchDocum
 
 class BuildResearchV3Service:
     """Research all holdings and a bounded prefix of screened new candidates."""
-    def __init__(self, *, provider: ResearchProvider, store: ResearchV3Store | None = None, now: Callable[[], datetime] | None = None, max_deep_research_subjects: int = 5) -> None:
-        if max_deep_research_subjects <= 0:
-            raise ValueError("max_deep_research_subjects must be positive")
+    def __init__(self, *, provider: ResearchProvider, store: ResearchV3Store | None = None, cache_store: ResearchV3CacheStore | None = None, now: Callable[[], datetime] | None = None, max_deep_research_subjects: int = 8, cache_freshness: timedelta = timedelta(days=7)) -> None:
+        if max_deep_research_subjects <= 0 or cache_freshness <= timedelta(0):
+            raise ValueError("research budget and cache freshness must be positive")
         self._provider, self._store = provider, store
+        self._cache = cache_store if cache_store is not None else store if all(callable(getattr(store, name, None)) for name in ("latest_company_research", "save_company_research", "consume_daily_deep_research_budget")) else None
         self._now = now or (lambda: datetime.now(timezone.utc))
         self._limit = max_deep_research_subjects
+        self._cache_freshness = cache_freshness
 
     def build(self, *, screening_run: ScreeningRunV2, portfolio: Portfolio) -> ResearchBatchV3:
         holdings = tuple(position.security for position in portfolio.positions if position.quantity > 0)
@@ -71,9 +79,19 @@ class BuildResearchV3Service:
             raise ValueError("V3 batch requires a candidate or nonzero holding")
         created_at = self._now()
         built: list[ResearchV3Subject] = []
-        for index, (security, role) in enumerate(subjects):
+        retrieved_this_batch = 0
+        for security, role in subjects:
             context = screening_context_for(screening_run, security) if role is ResearchSubjectRole.NEW_CANDIDATE else None
-            if index >= self._limit:
+            cached = None if self._cache is None else self._cache.latest_company_research(security)
+            if cached is not None and cached.retrieved_at + self._cache_freshness > created_at:
+                evidence, missing, contradictions = _document_evidence(security, cached.document, as_of=created_at)
+                evidence = tuple(ResearchV3Evidence(item.evidence_id, item.provider_identity, item.source_type, item.source_title, item.source_date, item.reference, "CACHED_FRESH", item.missing_data, item.contradiction) for item in evidence)
+                built.append(ResearchV3Subject(f"{security.ticker}:{uuid4()}", security, role, cached.retrieved_at, evidence, cached.document.provider_identity, context, missing, contradictions, cached.document))
+                continue
+            budget_available = retrieved_this_batch < self._limit
+            if budget_available and self._cache is not None:
+                budget_available = self._cache.consume_daily_deep_research_budget(created_at.date(), limit=self._limit)
+            if not budget_available:
                 provider_identity = type(self._provider).__name__
                 missing_item = MissingData(
                     MissingDataReason.NOT_AVAILABLE,
@@ -89,10 +107,15 @@ class BuildResearchV3Service:
                     provider_identity, context, (missing_item,), (), None,
                 ))
                 continue
+            retrieved_this_batch += 1
             try:
                 document = self._provider.get_company_research(security)
                 if document.security != security:
                     raise ResearchProviderError("provider returned research for a different security")
+                if self._cache is not None:
+                    # This independent append happens before any later batch,
+                    # manager, or cycle persistence can fail.
+                    self._cache.save_company_research(CompanyResearchVersion(str(uuid4()), security, created_at, document))
                 evidence, missing, contradictions = _document_evidence(security, document, as_of=created_at)
                 provider_identity = document.provider_identity
             except ResearchProviderError as error:
